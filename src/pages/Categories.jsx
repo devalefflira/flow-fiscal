@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '../supabaseClient'; // <--- Importamos o cliente
 import { 
   ChevronLeft, Plus, X, Trash2, Edit2,
   Tag, FileText, DollarSign, AlertCircle, 
@@ -9,24 +10,36 @@ import {
 
 export default function Categories() {
   const navigate = useNavigate();
-
-  // --- MOCK DATA ---
-  const [categories, setCategories] = useState([
-    { id: 1, name: 'Impostos', icon: 'dollar', color: 'bg-emerald-600', desc: 'Guias e tributos a pagar', dept: 'Fiscal' },
-    { id: 2, name: 'Obrigações', icon: 'file', color: 'bg-blue-600', desc: 'Declarações acessórias (SPED, DCTF)', dept: 'Fiscal' },
-    { id: 3, name: 'Atendimento', icon: 'users', color: 'bg-purple-600', desc: 'Dúvidas e solicitações de clientes', dept: 'Fiscal' },
-    { id: 4, name: 'Urgente', icon: 'alert', color: 'bg-red-600', desc: 'Prioridade máxima / Risco', dept: 'Fiscal' },
-  ]);
+  const [categories, setCategories] = useState([]);
+  const [loading, setLoading] = useState(true); // Estado de carregamento
 
   // --- ESTADOS DO MODAL ---
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   
-  // Form State
-  const initialForm = { id: null, name: '', icon: 'tag', color: 'bg-gray-600', desc: '', dept: 'Fiscal' };
+  // Form State (Ajustei os nomes para bater com o Banco de Dados: description, department)
+  const initialForm = { id: null, name: '', icon: 'tag', color: 'bg-gray-600', description: '', department: 'Fiscal' };
   const [formData, setFormData] = useState(initialForm);
 
-  // --- MAPA DE ÍCONES DISPONÍVEIS ---
+  // --- 1. BUSCAR DADOS (READ) ---
+  const fetchCategories = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('categories')
+      .select('*')
+      .order('id', { ascending: true }); // Ordenar por ID ou Nome
+
+    if (error) console.error('Erro ao buscar:', error);
+    else setCategories(data);
+    setLoading(false);
+  };
+
+  // Carrega os dados assim que a tela abre
+  useEffect(() => {
+    fetchCategories();
+  }, []);
+
+  // --- MAPA DE ÍCONES ---
   const iconMap = {
     tag: <Tag className="w-6 h-6" />,
     file: <FileText className="w-6 h-6" />,
@@ -42,7 +55,6 @@ export default function Categories() {
     layers: <Layers className="w-6 h-6" />,
   };
 
-  // --- PALETA DE CORES ---
   const colorPalette = [
     'bg-red-600', 'bg-orange-600', 'bg-amber-500', 
     'bg-emerald-600', 'bg-teal-600', 'bg-cyan-600',
@@ -62,21 +74,49 @@ export default function Categories() {
     setIsModalOpen(true);
   };
 
-  const handleSave = () => {
+  // --- 2. SALVAR (CREATE / UPDATE) ---
+  const handleSave = async () => {
     if (!formData.name.trim()) return;
 
+    const payload = {
+      name: formData.name,
+      icon: formData.icon,
+      color: formData.color,
+      description: formData.description,
+      department: formData.department
+    };
+
     if (isEditing) {
-      setCategories(prev => prev.map(c => c.id === formData.id ? formData : c));
+      // Update
+      const { error } = await supabase
+        .from('categories')
+        .update(payload)
+        .eq('id', formData.id);
+      
+      if (error) alert('Erro ao atualizar!');
     } else {
-      const newId = Math.max(...categories.map(c => c.id), 0) + 1;
-      setCategories([...categories, { ...formData, id: newId }]);
+      // Create
+      const { error } = await supabase
+        .from('categories')
+        .insert([payload]);
+
+      if (error) alert('Erro ao criar!');
     }
+
     setIsModalOpen(false);
+    fetchCategories(); // Recarrega a lista
   };
 
-  const handleDelete = (id) => {
+  // --- 3. DELETAR (DELETE) ---
+  const handleDelete = async (id) => {
     if (window.confirm('Tem certeza que deseja excluir esta categoria?')) {
-      setCategories(prev => prev.filter(c => c.id !== id));
+      const { error } = await supabase
+        .from('categories')
+        .delete()
+        .eq('id', id);
+
+      if (error) alert('Erro ao excluir!');
+      else fetchCategories(); // Recarrega a lista
     }
   };
 
@@ -102,54 +142,57 @@ export default function Categories() {
         </button>
       </div>
 
-      {/* GRID DE CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-        {categories.map((cat) => (
-          <div 
-            key={cat.id} 
-            className={`${cat.color} rounded-2xl p-6 relative group transition-transform hover:-translate-y-1 hover:shadow-2xl flex flex-col items-center text-center overflow-hidden border border-white/10`}
+      {/* LOADING STATE */}
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center text-gray-500 animate-pulse">
+          Carregando dados...
+        </div>
+      ) : (
+        /* GRID DE CARDS */
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+          {categories.map((cat) => (
+            <div 
+              key={cat.id} 
+              className={`${cat.color} rounded-2xl p-6 relative group transition-transform hover:-translate-y-1 hover:shadow-2xl flex flex-col items-center text-center overflow-hidden border border-white/10`}
+            >
+              <div className="absolute -right-4 -bottom-4 text-white opacity-10 transform rotate-12 scale-150 pointer-events-none">
+                {iconMap[cat.icon] || <Tag />}
+              </div>
+
+              <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button onClick={() => handleOpenModal(cat)} className="p-1.5 bg-white/20 hover:bg-white/40 rounded-lg text-white backdrop-blur-sm">
+                  <Edit2 className="w-4 h-4" />
+                </button>
+                <button onClick={() => handleDelete(cat.id)} className="p-1.5 bg-black/20 hover:bg-red-500/80 rounded-lg text-white backdrop-blur-sm">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center mb-4 shadow-inner backdrop-blur-md text-white">
+                {iconMap[cat.icon] ? React.cloneElement(iconMap[cat.icon], { className: "w-8 h-8" }) : <Tag className="w-8 h-8"/>}
+              </div>
+
+              <h3 className="text-xl font-bold text-white mb-1">{cat.name}</h3>
+              <p className="text-white/80 text-xs line-clamp-2">{cat.description || 'Sem descrição.'}</p>
+              
+              <div className="mt-4 px-3 py-1 bg-black/20 rounded-full text-[10px] font-bold text-white uppercase tracking-wider">
+                {cat.department}
+              </div>
+            </div>
+          ))}
+
+          {/* Card de Adicionar (Fantasma) */}
+          <button 
+            onClick={() => handleOpenModal()}
+            className="border-2 border-dashed border-white/10 rounded-2xl p-6 flex flex-col items-center justify-center gap-3 text-gray-500 hover:text-white hover:border-brand-cyan hover:bg-white/5 transition-all group min-h-[240px]"
           >
-            {/* Efeito de Fundo */}
-            <div className="absolute -right-4 -bottom-4 text-white opacity-10 transform rotate-12 scale-150 pointer-events-none">
-              {iconMap[cat.icon]}
+            <div className="w-12 h-12 rounded-full bg-white/5 group-hover:bg-brand-cyan/20 flex items-center justify-center transition-colors">
+              <Plus className="w-6 h-6" />
             </div>
-
-            {/* Ações (Hover) */}
-            <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button onClick={() => handleOpenModal(cat)} className="p-1.5 bg-white/20 hover:bg-white/40 rounded-lg text-white backdrop-blur-sm">
-                <Edit2 className="w-4 h-4" />
-              </button>
-              <button onClick={() => handleDelete(cat.id)} className="p-1.5 bg-black/20 hover:bg-red-500/80 rounded-lg text-white backdrop-blur-sm">
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Ícone Central */}
-            <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center mb-4 shadow-inner backdrop-blur-md text-white">
-              {React.cloneElement(iconMap[cat.icon], { className: "w-8 h-8" })}
-            </div>
-
-            {/* Conteúdo */}
-            <h3 className="text-xl font-bold text-white mb-1">{cat.name}</h3>
-            <p className="text-white/80 text-xs line-clamp-2">{cat.desc || 'Sem descrição.'}</p>
-            
-            <div className="mt-4 px-3 py-1 bg-black/20 rounded-full text-[10px] font-bold text-white uppercase tracking-wider">
-              {cat.dept}
-            </div>
-          </div>
-        ))}
-
-        {/* Card de Adicionar (Fantasma) */}
-        <button 
-          onClick={() => handleOpenModal()}
-          className="border-2 border-dashed border-white/10 rounded-2xl p-6 flex flex-col items-center justify-center gap-3 text-gray-500 hover:text-white hover:border-brand-cyan hover:bg-white/5 transition-all group"
-        >
-          <div className="w-12 h-12 rounded-full bg-white/5 group-hover:bg-brand-cyan/20 flex items-center justify-center transition-colors">
-            <Plus className="w-6 h-6" />
-          </div>
-          <span className="font-bold text-sm">Adicionar</span>
-        </button>
-      </div>
+            <span className="font-bold text-sm">Adicionar</span>
+          </button>
+        </div>
+      )}
 
       {/* --- MODAL --- */}
       {isModalOpen && (
@@ -165,21 +208,7 @@ export default function Categories() {
                 </button>
               </div>
 
-              {/* Preview do Card no Modal */}
-              <div className="flex justify-center mb-2">
-                 <div className={`${formData.color} w-full h-24 rounded-xl flex items-center justify-center gap-4 text-white shadow-lg border border-white/10 transition-colors`}>
-                    <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-md">
-                       {iconMap[formData.icon]}
-                    </div>
-                    <div className="text-left">
-                       <span className="block font-bold text-lg">{formData.name || 'Nome da Categoria'}</span>
-                       <span className="block text-xs opacity-80">{formData.dept}</span>
-                    </div>
-                 </div>
-              </div>
-
               <div className="space-y-4">
-                {/* Nome & Departamento */}
                 <div className="grid grid-cols-3 gap-4">
                    <div className="col-span-2 space-y-1">
                       <label className="text-xs font-bold text-gray-500 uppercase">Nome</label>
@@ -188,33 +217,29 @@ export default function Categories() {
                         value={formData.name}
                         onChange={(e) => setFormData({...formData, name: e.target.value})}
                         className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-white outline-none focus:border-brand-cyan"
-                        placeholder="Ex: Impostos"
                       />
                    </div>
                    <div className="col-span-1 space-y-1">
                       <label className="text-xs font-bold text-gray-500 uppercase">Depto.</label>
                       <input 
                         type="text" 
-                        value={formData.dept}
+                        value={formData.department}
                         disabled
                         className="w-full bg-background/50 border border-white/5 rounded-lg px-3 py-2 text-gray-400 cursor-not-allowed text-center"
                       />
                    </div>
                 </div>
 
-                {/* Descrição */}
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-gray-500 uppercase">Descrição</label>
                   <textarea 
                     rows="2"
-                    value={formData.desc}
-                    onChange={(e) => setFormData({...formData, desc: e.target.value})}
+                    value={formData.description}
+                    onChange={(e) => setFormData({...formData, description: e.target.value})}
                     className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-white outline-none focus:border-brand-cyan resize-none"
-                    placeholder="Para que serve esta categoria?"
                   />
                 </div>
 
-                {/* Seletor de Ícone */}
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-gray-500 uppercase">Ícone</label>
                   <div className="flex flex-wrap gap-2">
@@ -230,7 +255,6 @@ export default function Categories() {
                   </div>
                 </div>
 
-                {/* Seletor de Cor */}
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-gray-500 uppercase">Cor da Etiqueta</label>
                   <div className="flex flex-wrap gap-2">
@@ -247,16 +271,10 @@ export default function Categories() {
               </div>
 
               <div className="flex gap-3 pt-2">
-                <button 
-                  onClick={() => setIsModalOpen(false)}
-                  className="flex-1 py-3 text-gray-400 hover:text-white transition-colors"
-                >
+                <button onClick={() => setIsModalOpen(false)} className="flex-1 py-3 text-gray-400 hover:text-white transition-colors">
                   Cancelar
                 </button>
-                <button 
-                  onClick={handleSave}
-                  className="flex-1 bg-brand-cyan hover:bg-cyan-600 text-white font-bold rounded-xl shadow-lg transition-transform active:scale-95"
-                >
+                <button onClick={handleSave} className="flex-1 bg-brand-cyan hover:bg-cyan-600 text-white font-bold rounded-xl shadow-lg transition-transform active:scale-95">
                   Salvar
                 </button>
               </div>

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '../supabaseClient'; // Importando Supabase
 import { 
   ChevronLeft, Plus, Search, 
   Edit2, Trash2, X, Building, 
@@ -9,65 +10,53 @@ import {
 
 export default function Clients() {
   const navigate = useNavigate();
-
-  // --- MOCK DATA ---
-  const [clients, setClients] = useState([
-    { 
-      id: 1, 
-      razao: 'TechSolutions Desenvolvimento Ltda', 
-      cnpj: '12.345.678/0001-90',
-      regime: 'Lucro Presumido',
-      im: '123456',
-      ie: 'Isento',
-      certVal: '2026-05-20', // Vence longe
-      prefLink: 'https://nfse.blumenau.sc.gov.br',
-      prefPass: 'Senha@123'
-    },
-    { 
-      id: 2, 
-      razao: 'Padaria Central do Bairro', 
-      cnpj: '98.765.432/0001-10',
-      regime: 'Simples Nacional',
-      im: '987654',
-      ie: '25.654.321-9',
-      certVal: '2026-02-20', // Vence em breve (ex: < 30 dias)
-      prefLink: 'https://nfse.saopaulo.sp.gov.br',
-      prefPass: 'PaoQuentinho2026'
-    },
-    { 
-      id: 3, 
-      razao: 'Indústria Metalúrgica Ferro Forte', 
-      cnpj: '45.123.789/0001-55',
-      regime: 'Lucro Real',
-      im: '112233',
-      ie: '123.456.789.111',
-      certVal: '2026-01-10', // Vencido
-      prefLink: 'https://fazenda.gov.br',
-      prefPass: 'Ferro2025!'
-    },
-  ]);
+  const [clients, setClients] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [showPassword, setShowPassword] = useState({}); // Controle de visibilidade de senha por ID
+  const [showPassword, setShowPassword] = useState({});
 
   // --- ESTADOS DO MODAL ---
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState('basic'); // 'basic' ou 'fiscal'
+  const [activeTab, setActiveTab] = useState('basic');
   const [isEditing, setIsEditing] = useState(false);
 
-  // Form State
+  // Form State (Nomes iguais ao Banco de Dados)
   const initialForm = { 
     id: null, 
-    razao: '', cnpj: '', regime: 'Simples Nacional', im: '', ie: '', 
-    certVal: '', prefLink: '', prefPass: '' 
+    razao_social: '', 
+    cnpj: '', 
+    regime: 'Simples Nacional', 
+    im: '', 
+    ie: '', 
+    cert_val: '', 
+    pref_link: '', 
+    pref_pass: '' 
   };
   const [formData, setFormData] = useState(initialForm);
 
-  // --- LÓGICA DE ALERTA DE CERTIFICADO ---
+  // --- 1. BUSCAR DADOS (READ) ---
+  const fetchClients = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('clients')
+      .select('*')
+      .order('razao_social', { ascending: true });
+
+    if (error) console.error('Erro ao buscar clientes:', error);
+    else setClients(data);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchClients();
+  }, []);
+
+  // --- HELPERS ---
   const getCertStatus = (dateString) => {
     if (!dateString) return { color: 'text-gray-500', icon: ShieldCheck, label: 'Não informado', bg: 'bg-white/5' };
     
-    const today = new Date('2026-02-15'); // Data simulada (hoje)
+    const today = new Date(); // Data real de hoje
     const valDate = new Date(dateString);
     const diffTime = valDate - today;
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -75,6 +64,10 @@ export default function Clients() {
     if (diffDays < 0) return { color: 'text-red-500', bg:'bg-red-500/10', icon: AlertCircle, label: 'Vencido' };
     if (diffDays <= 30) return { color: 'text-yellow-500', bg:'bg-yellow-500/10', icon: AlertTriangle, label: 'Vence em breve' };
     return { color: 'text-emerald-500', bg:'bg-emerald-500/10', icon: ShieldCheck, label: 'Válido' };
+  };
+
+  const togglePasswordVisibility = (id) => {
+    setShowPassword(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
   // --- AÇÕES ---
@@ -90,31 +83,51 @@ export default function Clients() {
     setIsModalOpen(true);
   };
 
-  const handleSave = () => {
-    if (!formData.razao.trim()) return;
+  // --- 2. SALVAR (CREATE / UPDATE) ---
+  const handleSave = async () => {
+    if (!formData.razao_social.trim()) return;
+
+    // Removemos o ID do payload para o insert (o banco gera sozinho)
+    const { id, ...payload } = formData;
+
+    // Tratamento para datas vazias (Supabase não gosta de string vazia em campo date)
+    if (payload.cert_val === '') payload.cert_val = null;
 
     if (isEditing) {
-      setClients(prev => prev.map(c => c.id === formData.id ? formData : c));
+      const { error } = await supabase
+        .from('clients')
+        .update(payload)
+        .eq('id', formData.id);
+      
+      if (error) alert('Erro ao atualizar: ' + error.message);
     } else {
-      const newId = Math.max(...clients.map(c => c.id), 0) + 1;
-      setClients([...clients, { ...formData, id: newId }]);
+      const { error } = await supabase
+        .from('clients')
+        .insert([payload]);
+
+      if (error) alert('Erro ao criar: ' + error.message);
     }
+
     setIsModalOpen(false);
+    fetchClients();
   };
 
-  const handleDelete = (id) => {
-    if (window.confirm('Excluir este cliente?')) {
-      setClients(prev => prev.filter(c => c.id !== id));
+  // --- 3. DELETAR (DELETE) ---
+  const handleDelete = async (id) => {
+    if (window.confirm('Excluir este cliente permanentemente?')) {
+      const { error } = await supabase
+        .from('clients')
+        .delete()
+        .eq('id', id);
+
+      if (error) alert('Erro ao excluir: ' + error.message);
+      else fetchClients();
     }
   };
 
-  const togglePasswordVisibility = (id) => {
-    setShowPassword(prev => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  // Filtro
+  // Filtro (Client-side, já que a lista não será gigante na V1)
   const filteredClients = clients.filter(c => 
-    c.razao.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    c.razao_social.toLowerCase().includes(searchTerm.toLowerCase()) ||
     c.cnpj.includes(searchTerm)
   );
 
@@ -140,7 +153,7 @@ export default function Clients() {
         </button>
       </div>
 
-      {/* BARRA DE BUSCA */}
+      {/* SEARCH */}
       <div className="bg-surface p-4 rounded-xl border border-white/5 mb-6">
         <div className="flex items-center gap-3 bg-background px-4 py-3 rounded-lg border border-white/10 focus-within:border-brand-cyan transition-colors">
             <Search className="w-5 h-5 text-gray-500" />
@@ -154,93 +167,103 @@ export default function Clients() {
         </div>
       </div>
 
-      {/* TABELA DENSA */}
-      <div className="bg-surface rounded-xl border border-white/5 overflow-hidden flex-1 flex flex-col shadow-xl">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-white/5 text-gray-400 text-xs uppercase border-b border-white/10">
-                <th className="p-4 font-bold">Razão Social / CNPJ</th>
-                <th className="p-4 font-bold">Regime / Inscrições</th>
-                <th className="p-4 font-bold">Certificado Digital</th>
-                <th className="p-4 font-bold text-right">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {filteredClients.map((client) => {
-                const certStatus = getCertStatus(client.certVal);
-                const CertIcon = certStatus.icon;
-
-                return (
-                  <tr key={client.id} className="hover:bg-white/5 transition-colors group">
-                    
-                    {/* Razão Social & CNPJ */}
-                    <td className="p-4 align-top">
-                      <div className="flex flex-col">
-                        <span className="text-white font-bold text-sm">{client.razao}</span>
-                        <span className="text-xs text-gray-500 font-mono mt-1">{client.cnpj}</span>
-                      </div>
-                    </td>
-
-                    {/* Regime & Inscrições */}
-                    <td className="p-4 align-top">
-                      <div className="flex flex-col gap-1">
-                        <span className="text-xs font-bold text-brand-cyan bg-brand-cyan/10 px-2 py-0.5 rounded w-fit mb-1">
-                          {client.regime}
-                        </span>
-                        <span className="text-xs text-gray-400">
-                           <strong className="text-gray-500">IM:</strong> {client.im || '-'}
-                        </span>
-                        <span className="text-xs text-gray-400">
-                           <strong className="text-gray-500">IE:</strong> {client.ie || '-'}
-                        </span>
-                      </div>
-                    </td>
-
-                    {/* Certificado Digital */}
-                    <td className="p-4 align-top">
-                      <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/5 ${certStatus.bg}`}>
-                         <CertIcon className={`w-4 h-4 ${certStatus.color}`} />
-                         <div className="flex flex-col">
-                           <span className={`text-xs font-bold ${certStatus.color}`}>{certStatus.label}</span>
-                           <span className="text-[10px] text-gray-400">{client.certVal ? client.certVal.split('-').reverse().join('/') : '-'}</span>
-                         </div>
-                      </div>
-                    </td>
-
-                    {/* Ações */}
-                    <td className="p-4 align-middle text-right">
-                      <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button 
-                          onClick={() => handleOpenModal(client)}
-                          className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-brand-cyan transition-colors"
-                          title="Editar"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={() => handleDelete(client.id)}
-                          className="p-2 bg-white/5 hover:bg-red-500/20 rounded-lg text-red-500 transition-colors"
-                          title="Excluir"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      {/* LOADING STATE */}
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center text-gray-500 animate-pulse">
+          Carregando clientes...
         </div>
-      </div>
+      ) : (
+        /* TABELA */
+        <div className="bg-surface rounded-xl border border-white/5 overflow-hidden flex-1 flex flex-col shadow-xl">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-white/5 text-gray-400 text-xs uppercase border-b border-white/10">
+                  <th className="p-4 font-bold">Razão Social / CNPJ</th>
+                  <th className="p-4 font-bold">Regime / Inscrições</th>
+                  <th className="p-4 font-bold">Certificado Digital</th>
+                  <th className="p-4 font-bold text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {filteredClients.map((client) => {
+                  const certStatus = getCertStatus(client.cert_val);
+                  const CertIcon = certStatus.icon;
 
-      {/* --- MODAL COM ABAS --- */}
+                  return (
+                    <tr key={client.id} className="hover:bg-white/5 transition-colors group">
+                      
+                      {/* Coluna 1 */}
+                      <td className="p-4 align-top">
+                        <div className="flex flex-col">
+                          <span className="text-white font-bold text-sm">{client.razao_social}</span>
+                          <span className="text-xs text-gray-500 font-mono mt-1">{client.cnpj}</span>
+                        </div>
+                      </td>
+
+                      {/* Coluna 2 */}
+                      <td className="p-4 align-top">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-xs font-bold text-brand-cyan bg-brand-cyan/10 px-2 py-0.5 rounded w-fit mb-1">
+                            {client.regime}
+                          </span>
+                          <span className="text-xs text-gray-400">
+                            <strong className="text-gray-500">IM:</strong> {client.im || '-'}
+                          </span>
+                          <span className="text-xs text-gray-400">
+                            <strong className="text-gray-500">IE:</strong> {client.ie || '-'}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Coluna 3 */}
+                      <td className="p-4 align-top">
+                        <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/5 ${certStatus.bg}`}>
+                          <CertIcon className={`w-4 h-4 ${certStatus.color}`} />
+                          <div className="flex flex-col">
+                            <span className={`text-xs font-bold ${certStatus.color}`}>{certStatus.label}</span>
+                            <span className="text-[10px] text-gray-400">{client.cert_val ? client.cert_val.split('-').reverse().join('/') : '-'}</span>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Coluna 4 (Ações) */}
+                      <td className="p-4 align-middle text-right">
+                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button 
+                            onClick={() => handleOpenModal(client)}
+                            className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-brand-cyan transition-colors"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={() => handleDelete(client.id)}
+                            className="p-2 bg-white/5 hover:bg-red-500/20 rounded-lg text-red-500 transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            
+            {filteredClients.length === 0 && (
+              <div className="p-12 text-center text-gray-500 text-sm">
+                Nenhum cliente encontrado.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* --- MODAL --- */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 animate-fade-in p-4">
            <div className="bg-surface rounded-2xl w-full max-w-2xl border border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
               
-              {/* Header Modal */}
               <div className="p-6 border-b border-white/10 flex justify-between items-center bg-surface">
                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
                   <Building className="w-5 h-5 text-brand-cyan" />
@@ -251,7 +274,6 @@ export default function Clients() {
                 </button>
               </div>
 
-              {/* Abas de Navegação */}
               <div className="flex border-b border-white/10">
                 <button 
                   onClick={() => setActiveTab('basic')}
@@ -271,24 +293,21 @@ export default function Clients() {
                 </button>
               </div>
 
-              {/* Conteúdo do Modal */}
               <div className="p-6 overflow-y-auto custom-scrollbar">
                 
                 {/* ABA 1: DADOS BÁSICOS */}
                 {activeTab === 'basic' && (
                   <div className="space-y-4 animate-fade-in">
-                    
                     <div className="space-y-1">
                       <label className="text-xs font-bold text-gray-500 uppercase">Razão Social</label>
                       <input 
                         type="text" 
-                        value={formData.razao}
-                        onChange={(e) => setFormData({...formData, razao: e.target.value})}
+                        value={formData.razao_social}
+                        onChange={(e) => setFormData({...formData, razao_social: e.target.value})}
                         className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-white outline-none focus:border-brand-cyan"
                         placeholder="Ex: Empresa Exemplo Ltda"
                       />
                     </div>
-
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-gray-500 uppercase">CNPJ</label>
@@ -297,7 +316,6 @@ export default function Clients() {
                           value={formData.cnpj}
                           onChange={(e) => setFormData({...formData, cnpj: e.target.value})}
                           className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-white outline-none focus:border-brand-cyan"
-                          placeholder="00.000.000/0000-00"
                         />
                       </div>
                       <div className="space-y-1">
@@ -316,7 +334,6 @@ export default function Clients() {
                         </select>
                       </div>
                     </div>
-
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-gray-500 uppercase">Inscrição Municipal</label>
@@ -343,60 +360,52 @@ export default function Clients() {
                 {/* ABA 2: FISCAL & ACESSO */}
                 {activeTab === 'fiscal' && (
                   <div className="space-y-6 animate-fade-in">
-                    
-                    {/* Seção Certificado */}
                     <div className="bg-white/5 p-4 rounded-xl border border-white/10">
                       <div className="flex items-center gap-2 mb-3 text-brand-cyan">
                         <ShieldCheck className="w-5 h-5" />
                         <h3 className="font-bold text-sm">Certificado Digital (A1/A3)</h3>
                       </div>
                       <div className="space-y-1">
-                        <label className="text-xs font-bold text-gray-500 uppercase">Validade do Certificado</label>
+                        <label className="text-xs font-bold text-gray-500 uppercase">Validade</label>
                         <input 
                           type="date" 
-                          value={formData.certVal}
-                          onChange={(e) => setFormData({...formData, certVal: e.target.value})}
+                          value={formData.cert_val || ''}
+                          onChange={(e) => setFormData({...formData, cert_val: e.target.value})}
                           className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-white outline-none focus:border-brand-cyan [&::-webkit-calendar-picker-indicator]:invert"
                         />
-                        <p className="text-[10px] text-gray-500">O sistema alertará 30 dias antes do vencimento.</p>
                       </div>
                     </div>
 
-                    {/* Seção Prefeitura */}
                     <div className="bg-white/5 p-4 rounded-xl border border-white/10">
                       <div className="flex items-center gap-2 mb-3 text-brand-cyan">
                         <Building className="w-5 h-5" />
                         <h3 className="font-bold text-sm">Acesso Prefeitura (NFS-e)</h3>
                       </div>
-                      
                       <div className="space-y-3">
                         <div className="space-y-1">
                           <label className="text-xs font-bold text-gray-500 uppercase">Link de Acesso</label>
                           <div className="flex gap-2">
                              <input 
                               type="text" 
-                              value={formData.prefLink}
-                              onChange={(e) => setFormData({...formData, prefLink: e.target.value})}
+                              value={formData.pref_link}
+                              onChange={(e) => setFormData({...formData, pref_link: e.target.value})}
                               className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-white outline-none focus:border-brand-cyan"
-                              placeholder="https://..."
                             />
-                            {formData.prefLink && (
-                              <a href={formData.prefLink} target="_blank" rel="noreferrer" className="p-2 bg-white/10 rounded-lg hover:bg-white/20 text-white">
+                            {formData.pref_link && (
+                              <a href={formData.pref_link} target="_blank" rel="noreferrer" className="p-2 bg-white/10 rounded-lg hover:bg-white/20 text-white">
                                 <ExternalLink className="w-5 h-5" />
                               </a>
                             )}
                           </div>
                         </div>
-
                         <div className="space-y-1">
-                          <label className="text-xs font-bold text-gray-500 uppercase">Senha de Acesso</label>
+                          <label className="text-xs font-bold text-gray-500 uppercase">Senha</label>
                           <div className="relative">
                             <input 
                               type={showPassword['modal'] ? "text" : "password"}
-                              value={formData.prefPass}
-                              onChange={(e) => setFormData({...formData, prefPass: e.target.value})}
+                              value={formData.pref_pass}
+                              onChange={(e) => setFormData({...formData, pref_pass: e.target.value})}
                               className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-white outline-none focus:border-brand-cyan pr-10"
-                              placeholder="••••••"
                             />
                             <button 
                               type="button"
@@ -409,32 +418,18 @@ export default function Clients() {
                         </div>
                       </div>
                     </div>
-
                   </div>
                 )}
-
               </div>
 
-              {/* Footer Modal */}
               <div className="p-6 border-t border-white/10 flex gap-3 bg-surface">
-                <button 
-                  onClick={() => setIsModalOpen(false)}
-                  className="flex-1 py-3 text-gray-400 hover:text-white transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button 
-                  onClick={handleSave}
-                  className="flex-1 bg-brand-cyan hover:bg-cyan-600 text-white font-bold rounded-xl shadow-lg transition-transform active:scale-95"
-                >
-                  Salvar Cliente
-                </button>
+                <button onClick={() => setIsModalOpen(false)} className="flex-1 py-3 text-gray-400 hover:text-white transition-colors">Cancelar</button>
+                <button onClick={handleSave} className="flex-1 bg-brand-cyan hover:bg-cyan-600 text-white font-bold rounded-xl shadow-lg transition-transform active:scale-95">Salvar Cliente</button>
               </div>
 
            </div>
         </div>
       )}
-
     </div>
   );
 }
