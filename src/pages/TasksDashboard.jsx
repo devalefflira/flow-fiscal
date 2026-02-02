@@ -1,262 +1,302 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
+import { supabase } from '../supabaseClient'; // Conexão com o banco
 import { 
-  ChevronLeft, ChevronRight, Clock, CheckCircle, 
-  MoreHorizontal, Calendar, Filter 
+  Search, Filter, Plus, MoreHorizontal, 
+  Calendar, Clock, AlertCircle, CheckCircle, 
+  Briefcase, Hash
 } from 'lucide-react';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
+import { useNavigate } from 'react-router-dom';
 
-// --- SUB-COMPONENTES VISUAIS ---
-
-// Componente para os Números Grandes (KPIs)
-const StatCard = ({ value, label, sublabel, color = "text-primary" }) => (
-  <div className="flex flex-col items-center justify-center p-6 border-r border-white/5 last:border-r-0">
-    <span className={`text-4xl font-bold ${color} mb-2`}>{value}</span>
-    <span className="text-gray-400 text-sm font-medium">{label}</span>
-    {sublabel && <span className="text-xs text-gray-600 mt-1">{sublabel}</span>}
-  </div>
-);
-
-// Componente do Gráfico de Rosca (Donut)
-const DonutChart = () => {
-  const data = [
-    { name: 'Digisac', value: 40, color: '#3B82F6' },    // Azul
-    { name: 'Ekanban', value: 15, color: '#10B981' },    // Verde
-    { name: 'Fechamento', value: 10, color: '#F59E0B' }, // Amarelo
-    { name: 'Obrigações', value: 15, color: '#8B5CF6' }, // Roxo
-  ];
-
-  return (
-    <div className="h-64 w-full relative">
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie
-            data={data}
-            innerRadius={60}
-            outerRadius={80}
-            paddingAngle={5}
-            dataKey="value"
-            stroke="none"
-          >
-            {data.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={entry.color} />
-            ))}
-          </Pie>
-          <Tooltip 
-            contentStyle={{ backgroundColor: '#202024', border: 'none', borderRadius: '8px' }}
-            itemStyle={{ color: '#fff' }}
-          />
-        </PieChart>
-      </ResponsiveContainer>
-      {/* Legenda Manual */}
-      <div className="flex justify-center gap-4 mt-2 flex-wrap">
-        {data.map((item) => (
-          <div key={item.name} className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
-            <span className="text-xs text-gray-400">{item.name}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-// --- COMPONENTE PRINCIPAL ---
-
-export default function TasksDashboard() {
+export default function TaskDashboard() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('overview'); // overview, tasks, focus
+  const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  // Estrutura inicial das colunas
+  const [columns, setColumns] = useState({
+    todo: { id: 'todo', title: 'A Fazer', items: [] },
+    doing: { id: 'doing', title: 'Em Andamento', items: [] },
+    done: { id: 'done', title: 'Concluído', items: [] },
+  });
+
+  // --- 1. BUSCAR TAREFAS (READ) ---
+  const fetchTasks = async () => {
+    try {
+      setLoading(true);
+      
+      // Busca tarefas + dados do cliente + dados da categoria
+      const { data, error } = await supabase
+        .from('tasks')
+        .select(`
+          *,
+          clients (razao_social),
+          categories (name, color, icon)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      // Organiza as tarefas nas colunas corretas
+      const newColumns = {
+        todo: { id: 'todo', title: 'A Fazer', items: [] },
+        doing: { id: 'doing', title: 'Em Andamento', items: [] },
+        done: { id: 'done', title: 'Concluído', items: [] },
+      };
+
+      data.forEach(task => {
+        if (newColumns[task.status]) {
+          newColumns[task.status].items.push(task);
+        } else {
+          // Fallback para tarefas com status desconhecido (joga no todo)
+          newColumns.todo.items.push(task);
+        }
+      });
+
+      setColumns(newColumns);
+
+    } catch (error) {
+      console.error('Erro ao buscar tarefas:', error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTasks();
+  }, []);
+
+  // --- 2. ATUALIZAR STATUS (DRAG & DROP) ---
+  const onDragEnd = async (result) => {
+    if (!result.destination) return;
+
+    const { source, destination } = result;
+
+    // Se soltou no mesmo lugar, não faz nada
+    if (source.droppableId === destination.droppableId && source.index === destination.index) return;
+
+    // Cópia das colunas para atualização otimista (visual)
+    const sourceCol = columns[source.droppableId];
+    const destCol = columns[destination.droppableId];
+    const sourceItems = [...sourceCol.items];
+    const destItems = [...destCol.items];
+
+    const [removed] = sourceItems.splice(source.index, 1);
+    
+    // Atualiza o objeto removido com o novo status (para manter consistência local)
+    const updatedTask = { ...removed, status: destination.droppableId };
+    
+    destItems.splice(destination.index, 0, updatedTask);
+
+    setColumns({
+      ...columns,
+      [source.droppableId]: { ...sourceCol, items: sourceItems },
+      [destination.droppableId]: { ...destCol, items: destItems },
+    });
+
+    // --- ATUALIZAÇÃO NO BANCO (SUPABASE) ---
+    try {
+      const { error } = await supabase
+        .from('tasks')
+        .update({ status: destination.droppableId })
+        .eq('id', removed.id);
+
+      if (error) throw error;
+      // Não precisamos recarregar tudo (fetchTasks) porque já atualizamos visualmente
+    } catch (error) {
+      console.error('Erro ao mover card:', error.message);
+      alert('Erro ao salvar movimentação. Recarregue a página.');
+      fetchTasks(); // Reverte em caso de erro
+    }
+  };
+
+  // --- HELPERS VISUAIS ---
+  const getPriorityColor = (prio) => {
+    switch (prio) {
+      case 'Alta': return 'text-red-500 bg-red-500/10 border-red-500/20';
+      case 'Média': return 'text-yellow-500 bg-yellow-500/10 border-yellow-500/20';
+      case 'Baixa': return 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20';
+      default: return 'text-gray-500 bg-gray-500/10 border-gray-500/20';
+    }
+  };
+
+  // Filtro de Busca (Client-side)
+  // Filtra itens dentro das colunas sem perder a estrutura
+  const getFilteredColumns = () => {
+    if (!searchTerm) return columns;
+    
+    const filtered = {};
+    Object.keys(columns).forEach(key => {
+      filtered[key] = {
+        ...columns[key],
+        items: columns[key].items.filter(task => 
+          task.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (task.clients?.razao_social && task.clients.razao_social.toLowerCase().includes(searchTerm.toLowerCase()))
+        )
+      };
+    });
+    return filtered;
+  };
+
+  const displayColumns = getFilteredColumns();
 
   return (
-    <div className="min-h-screen bg-background p-8 font-sans">
+    <div className="flex flex-col h-screen bg-background overflow-hidden">
       
-      {/* --- HEADER --- */}
-      <header className="flex items-center justify-between mb-8">
-        <h1 className="text-2xl font-bold text-white">Visão Tarefas/Foco</h1>
-        
-        {/* Navegação de Abas (Pílula) */}
-        <div className="bg-surface rounded-full p-1 flex items-center">
-          <button 
-            onClick={() => setActiveTab('overview')}
-            className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${activeTab === 'overview' ? 'bg-surfaceHover text-white' : 'text-gray-500 hover:text-gray-300'}`}
-          >
-            Visão geral
-          </button>
-          <button 
-            onClick={() => setActiveTab('tasks')}
-            className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${activeTab === 'tasks' ? 'bg-surfaceHover text-white' : 'text-gray-500 hover:text-gray-300'}`}
-          >
-            Tarefa
-          </button>
-          <button 
-            onClick={() => setActiveTab('focus')}
-            className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${activeTab === 'focus' ? 'bg-surfaceHover text-white' : 'text-gray-500 hover:text-gray-300'}`}
-          >
-            Foco
-          </button>
+      {/* HEADER DO DASHBOARD */}
+      <div className="flex items-center justify-between px-8 py-6 border-b border-white/5 bg-surface/50 backdrop-blur-sm z-10">
+        <div>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+            Dashboard
+            <span className="text-xs font-normal text-gray-500 bg-white/5 px-2 py-1 rounded-full border border-white/5">
+              Visão Kanban
+            </span>
+          </h1>
+          <p className="text-gray-500 text-sm">Gerencie o fluxo de trabalho do escritório</p>
         </div>
 
-        <button 
-          onClick={() => navigate('/home')}
-          className="bg-primary hover:bg-primary-hover text-white font-bold py-2 px-6 rounded-lg transition-colors"
-        >
-          Voltar
-        </button>
-      </header>
+        <div className="flex items-center gap-4">
+          {/* Barra de Busca */}
+          <div className="flex items-center gap-3 bg-surface px-4 py-2.5 rounded-xl border border-white/10 focus-within:border-brand-cyan transition-colors w-64">
+            <Search className="w-4 h-4 text-gray-500" />
+            <input 
+              type="text" 
+              placeholder="Filtrar tarefas..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="bg-transparent text-white w-full outline-none text-sm placeholder-gray-600"
+            />
+          </div>
 
-      {/* --- TOP BAR (RESUMO) --- */}
-      <div className="bg-surface rounded-xl p-4 mb-8 flex items-center justify-around border border-white/5">
-        <div className="flex gap-2 text-sm font-bold text-white"><span>1000</span> <span className="text-gray-400 font-normal">Tarefas</span></div>
-        <div className="flex gap-2 text-sm font-bold text-white"><span>500</span> <span className="text-gray-400 font-normal">Concluídas</span></div>
-        <div className="flex gap-2 text-sm font-bold text-white"><span>8</span> <span className="text-gray-400 font-normal">Categorias</span></div>
-        <div className="flex gap-2 text-sm font-bold text-white"><span>45</span> <span className="text-gray-400 font-normal">Dias</span></div>
+          <button className="p-2.5 bg-surface border border-white/10 rounded-xl text-gray-400 hover:text-white hover:border-white/20 transition-all">
+            <Filter className="w-5 h-5" />
+          </button>
+
+          <button 
+            onClick={() => navigate('/tarefas/adicionar')}
+            className="bg-primary hover:bg-primary-hover text-white px-4 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg shadow-blue-500/20 active:scale-95"
+          >
+            <Plus className="w-5 h-5" /> Nova Tarefa
+          </button>
+        </div>
       </div>
 
-      {/* --- CONTEÚDO DINÂMICO --- */}
-      
-      {/* 1. ABA VISÃO GERAL */}
-      {activeTab === 'overview' && (
-        <div className="bg-surface rounded-2xl p-8 border border-white/5 animate-fade-in-up">
-          <h2 className="text-gray-400 text-sm mb-6">Visão geral</h2>
-          <div className="grid grid-cols-3 gap-y-12">
-            <StatCard value="50" label="Conclusão de Hoje" />
-            <StatCard value="12" label="Pomo" />
-            <StatCard value="7h25min" label="Foco de Hoje" />
-            
-            <StatCard value="500" label="Conclusão Total" />
-            <StatCard value="64" label="Pomos totais" />
-            <StatCard value="600h55min" label="Duração Total Foco" />
+      {/* ÁREA DE DRAG & DROP */}
+      <div className="flex-1 overflow-x-auto overflow-y-hidden p-8">
+        
+        {loading ? (
+          <div className="flex items-center justify-center h-full text-gray-500 animate-pulse">
+            Carregando quadro...
           </div>
-        </div>
-      )}
+        ) : (
+          <DragDropContext onDragEnd={onDragEnd}>
+            <div className="flex h-full gap-6 min-w-[1000px]">
+              
+              {Object.entries(displayColumns).map(([columnId, column]) => (
+                <div key={columnId} className="flex-1 flex flex-col min-w-[320px]">
+                  
+                  {/* Título da Coluna */}
+                  <div className="flex items-center justify-between mb-4 px-1">
+                    <h2 className="font-bold text-gray-300 flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full 
+                        ${columnId === 'todo' ? 'bg-gray-400' : 
+                          columnId === 'doing' ? 'bg-brand-cyan' : 'bg-emerald-500'}
+                      `}></div>
+                      {column.title}
+                      <span className="text-xs text-gray-600 font-mono ml-1">
+                        ({column.items.length})
+                      </span>
+                    </h2>
+                  </div>
 
-      {/* 2. ABA TAREFA */}
-      {activeTab === 'tasks' && (
-        <div className="animate-fade-in-up">
-          {/* Filtros */}
-          <div className="flex items-center gap-4 mb-6">
-            <button className="bg-surface hover:bg-surfaceHover text-gray-300 px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors">
-              Diariamente <ChevronRight className="w-4 h-4 rotate-90" />
-            </button>
-            <div className="bg-surface flex items-center rounded-lg px-2">
-              <button className="p-2 text-gray-500 hover:text-white"><ChevronLeft className="w-4 h-4" /></button>
-              <span className="text-sm text-white px-2">Hoje</span>
-              <button className="p-2 text-gray-500 hover:text-white"><ChevronRight className="w-4 h-4" /></button>
+                  {/* Área Droppable */}
+                  <Droppable droppableId={columnId}>
+                    {(provided, snapshot) => (
+                      <div
+                        {...provided.droppableProps}
+                        ref={provided.innerRef}
+                        className={`
+                          flex-1 rounded-2xl p-3 transition-colors overflow-y-auto custom-scrollbar border border-white/5
+                          ${snapshot.isDraggingOver ? 'bg-white/5 border-brand-cyan/30' : 'bg-surface/30'}
+                        `}
+                      >
+                        {column.items.map((item, index) => (
+                          <Draggable key={item.id} draggableId={item.id.toString()} index={index}>
+                            {(provided, snapshot) => (
+                              <div
+                                ref={provided.innerRef}
+                                {...provided.draggableProps}
+                                {...provided.dragHandleProps}
+                                className={`
+                                  bg-surface p-4 rounded-xl mb-3 border border-white/5 shadow-sm group
+                                  hover:border-brand-cyan/30 hover:shadow-lg transition-all
+                                  ${snapshot.isDragging ? 'rotate-2 scale-105 shadow-2xl z-50 border-brand-cyan' : ''}
+                                `}
+                                style={{ ...provided.draggableProps.style }}
+                              >
+                                {/* Tags Superiores (Categoria + Prioridade) */}
+                                <div className="flex justify-between items-start mb-3">
+                                  {item.categories ? (
+                                    <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider text-white ${item.categories.color || 'bg-gray-600'}`}>
+                                      {item.categories.name}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] font-bold px-2 py-1 rounded uppercase bg-gray-700 text-gray-300">
+                                      Geral
+                                    </span>
+                                  )}
+                                  
+                                  <div className={`text-[10px] font-bold px-2 py-0.5 rounded border flex items-center gap-1 ${getPriorityColor(item.priority)}`}>
+                                    <AlertCircle className="w-3 h-3" />
+                                    {item.priority}
+                                  </div>
+                                </div>
+
+                                {/* Conteúdo */}
+                                <h3 className="text-white font-bold text-sm mb-1 leading-snug">
+                                  {item.title}
+                                </h3>
+                                
+                                {item.clients && (
+                                  <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-3">
+                                    <Briefcase className="w-3 h-3" />
+                                    <span className="truncate max-w-[200px]">{item.clients.razao_social}</span>
+                                  </div>
+                                )}
+
+                                {/* Rodapé (Data e Avatar) */}
+                                <div className="flex items-center justify-between pt-3 border-t border-white/5 mt-2">
+                                  {item.due_date ? (
+                                    <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                                      <Calendar className="w-3 h-3" />
+                                      {new Date(item.due_date).toLocaleDateString('pt-BR')}
+                                    </div>
+                                  ) : (
+                                    <div className="text-xs text-gray-600 italic">Sem prazo</div>
+                                  )}
+
+                                  <button className="text-gray-600 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <MoreHorizontal className="w-4 h-4" />
+                                  </button>
+                                </div>
+
+                              </div>
+                            )}
+                          </Draggable>
+                        ))}
+                        {provided.placeholder}
+                      </div>
+                    )}
+                  </Droppable>
+
+                </div>
+              ))}
+
             </div>
-          </div>
+          </DragDropContext>
+        )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Card Esquerdo: KPIs Comparativos */}
-            <div className="bg-surface rounded-2xl p-8 border border-white/5 flex items-center justify-around">
-              <div className="text-center">
-                <div className="text-4xl font-bold text-primary mb-1">50</div>
-                <div className="text-gray-400 text-sm mb-2">Tarefas Concluídas</div>
-                <div className="text-emerald-500 text-xs flex items-center justify-center gap-1">
-                  6 mais que ontem <span className="text-xs">⬆</span>
-                </div>
-              </div>
-              <div className="w-px h-16 bg-white/10"></div>
-              <div className="text-center">
-                <div className="text-4xl font-bold text-primary mb-1">86%</div>
-                <div className="text-gray-400 text-sm mb-2">Taxa de Realização</div>
-                <div className="text-emerald-500 text-xs flex items-center justify-center gap-1">
-                  22% a mais que ontem <span className="text-xs">⬆</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Card Direito: Gráfico */}
-            <div className="bg-surface rounded-2xl p-6 border border-white/5">
-              <h3 className="text-white text-sm mb-4">Distribuição da taxa de conclusão</h3>
-              <DonutChart />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 3. ABA FOCO */}
-      {activeTab === 'focus' && (
-        <div className="animate-fade-in-up">
-          {/* KPIs do Topo */}
-          <div className="bg-surface rounded-2xl p-6 border border-white/5 mb-6 grid grid-cols-4 divide-x divide-white/5">
-            <StatCard value="0" label="Pomo de hoje" sublabel="0 de ontem ⬆" color="text-primary" />
-            <StatCard value="85" label="Pomos totais" />
-            <StatCard value="0h0m" label="Foco de hoje" sublabel="0h0m de ontem ⬆" color="text-primary" />
-            <StatCard value="224h56m" label="Duração Total Focada" />
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Área Esquerda (Timer/Conteúdo) - Placeholder conforme imagem */}
-            <div className="lg:col-span-2 bg-surface rounded-2xl p-6 border border-white/5 min-h-[300px] flex items-center justify-center relative overflow-hidden group">
-              <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent"></div>
-              <p className="text-gray-500">Área do Timer / Gráfico de Fluxo</p>
-            </div>
-
-            {/* Timeline à Direita */}
-            <div className="bg-surface rounded-2xl p-6 border border-white/5">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-white font-bold">Foco em registro.</h3>
-                <div className="flex gap-2 text-gray-400">
-                   <button className="hover:text-white">+</button>
-                   <button className="hover:text-white"><MoreHorizontal className="w-5 h-5" /></button>
-                </div>
-              </div>
-
-              {/* Lista Timeline */}
-              <div className="space-y-6 relative pl-2">
-                {/* Linha vertical da timeline */}
-                <div className="absolute left-[15px] top-2 bottom-2 w-0.5 bg-white/10"></div>
-
-                {/* Item 1 */}
-                <div className="relative pl-8">
-                  <div className="absolute left-0 top-1 w-8 h-8 rounded-full bg-surface border-2 border-primary flex items-center justify-center z-10">
-                    <Clock className="w-4 h-4 text-primary" />
-                  </div>
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <span className="text-xs text-gray-500 block mb-1">21:39 - 22:33</span>
-                      <p className="text-white text-sm font-medium">Aula 1 - Hadoop</p>
-                    </div>
-                    <span className="text-xs text-gray-500">32m</span>
-                  </div>
-                </div>
-
-                {/* Item 2 */}
-                <div className="relative pl-8">
-                  <div className="absolute left-0 top-1 w-8 h-8 rounded-full bg-surface border-2 border-primary flex items-center justify-center z-10">
-                    <Clock className="w-4 h-4 text-primary" />
-                  </div>
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <span className="text-xs text-gray-500 block mb-1">13:17 - 14:55</span>
-                      <p className="text-white text-sm font-medium">Trabalhar na Planilha de Prospecção</p>
-                    </div>
-                    <span className="text-xs text-gray-500">1h37m</span>
-                  </div>
-                </div>
-
-                 {/* Separador de Data */}
-                 <div className="text-xs text-gray-500 font-bold mt-4 mb-2 pl-2">mar 23, 2023</div>
-
-                 {/* Item 3 */}
-                 <div className="relative pl-8">
-                  <div className="absolute left-0 top-1 w-8 h-8 rounded-full bg-surface border-2 border-primary flex items-center justify-center z-10">
-                    <Clock className="w-4 h-4 text-primary" />
-                  </div>
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <span className="text-xs text-gray-500 block mb-1">10:38 - 12:05</span>
-                      <p className="text-white text-sm font-medium">Preparar Comissão</p>
-                    </div>
-                    <span className="text-xs text-gray-500">1h26m</span>
-                  </div>
-                </div>
-
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
