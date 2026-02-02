@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { supabase } from '../supabaseClient';
 import { useNavigate } from 'react-router-dom';
 import { 
-  ChevronLeft, Calendar, RefreshCw, 
-  CheckCircle, FileText, UserPlus, X, BoxSelect, AlertTriangle, Send
+  ChevronLeft, Calendar, RefreshCw, CheckCircle, 
+  Server, BoxSelect, AlertTriangle, Send, 
+  ArrowRight, ArrowLeft, RotateCcw, XCircle, PauseCircle
 } from 'lucide-react';
 
 export default function FiscalClosing() {
@@ -15,27 +15,36 @@ export default function FiscalClosing() {
   const getCurrentMonth = () => new Date().toISOString().slice(0, 7);
   const [selectedCompetence, setSelectedCompetence] = useState(getCurrentMonth());
 
+  // Estado de Seleção do Card
+  const [selectedCardId, setSelectedCardId] = useState(null);
+
   // Definição das Colunas
   const columnsDef = {
-    pending: { title: 'Pendente', color: 'bg-gray-500', items: [] },
-    docs_received: { title: 'Docs Recebidos', color: 'bg-blue-500', items: [] },
-    analysis: { title: 'Em Análise', color: 'bg-yellow-500', items: [] },
-    taxes_generated: { title: 'Impostos Gerados', color: 'bg-purple-500', items: [] },
-    done: { title: 'Concluído', color: 'bg-emerald-500', items: [] },
+    pending: { id: 'pending', title: 'Pendente', color: 'bg-gray-500', items: [] },
+    docs_received: { id: 'docs_received', title: 'Importação', color: 'bg-blue-500', items: [] },
+    analysis: { id: 'analysis', title: 'Apuração', color: 'bg-yellow-500', items: [] },
+    taxes_generated: { id: 'taxes_generated', title: 'Guias Geradas', color: 'bg-purple-500', items: [] },
+    done: { id: 'done', title: 'Fechamento Finalizado', color: 'bg-emerald-500', items: [] },
   };
-  
+
+  const columnOrder = ['pending', 'docs_received', 'analysis', 'taxes_generated', 'done'];
   const [columns, setColumns] = useState(columnsDef);
 
-  // --- ESTADOS DOS MODAIS ---
+  // --- MODAIS DE AVANÇO (FORWARD) ---
+  const [modalImportOpen, setModalImportOpen] = useState(false);
+  const [modalApurationOpen, setModalApurationOpen] = useState(false);
+  const [modalClosingOpen, setModalClosingOpen] = useState(false);
   
-  // 1. Modal de Movimento (Entradas/Saídas)
-  const [isMovementModalOpen, setIsMovementModalOpen] = useState(false);
-  const [pendingMoveDrag, setPendingMoveDrag] = useState(null); 
-  const [movementData, setMovementData] = useState({ entradas: false, saidas: false });
+  const [apurationData, setApurationData] = useState({ entradas: false, saidas: false });
 
-  // 2. Modal de Guias (Confirmação de Envio)
-  const [isGuideModalOpen, setIsGuideModalOpen] = useState(false);
-  const [pendingGuideDrag, setPendingGuideDrag] = useState(null);
+  // --- MODAIS DE RETORNO (REVERSE) ---
+  const [modalReverseClosingOpen, setModalReverseClosingOpen] = useState(false);   // Done -> Taxes
+  const [modalReverseGuidesOpen, setModalReverseGuidesOpen] = useState(false);     // Taxes -> Analysis
+  const [modalReverseAnalysisOpen, setModalReverseAnalysisOpen] = useState(false); // Analysis -> Docs
+  const [modalReverseImportOpen, setModalReverseImportOpen] = useState(false);     // Docs -> Pending
+
+  // Tarefa em foco (para qualquer modal)
+  const [activeTask, setActiveTask] = useState(null);
 
   // --- 1. BUSCAR DADOS ---
   const fetchData = async () => {
@@ -43,7 +52,6 @@ export default function FiscalClosing() {
     const compDate = `${selectedCompetence}-01`;
 
     try {
-      // Importante: garantir que completed_at venha no select (o * já traz, mas bom lembrar)
       const { data, error } = await supabase
         .from('fiscal_closings')
         .select(`*, clients(id, razao_social, regime)`)
@@ -70,7 +78,157 @@ export default function FiscalClosing() {
 
   useEffect(() => { fetchData(); }, [selectedCompetence]);
 
-  // --- 2. SINCRONIZAR ---
+  // --- 2. CONTROLE DE NAVEGAÇÃO ---
+
+  const handleMove = async (task, direction) => {
+    const currentIndex = columnOrder.indexOf(task.status);
+    if (currentIndex === -1) return;
+
+    let nextIndex;
+    // LÓGICA PADRÃO: Next (+) | Prev (-)
+    if (direction === 'next') nextIndex = currentIndex + 1;
+    else nextIndex = currentIndex - 1;
+
+    if (nextIndex < 0 || nextIndex >= columnOrder.length) return;
+    const nextStatus = columnOrder[nextIndex];
+
+    setActiveTask(task); // Define a tarefa ativa para os modais usarem
+
+    // >>> GATILHOS DE AVANÇO (DIREITA) <<<
+    if (direction === 'next') {
+      // Pendente -> Importação (Início Automático sem modal)
+      if (task.status === 'pending' && nextStatus === 'docs_received') {
+        const startedAt = new Date().toISOString();
+        await executeUpdate(task, nextStatus, { started_at: startedAt });
+        return;
+      }
+      // Importação -> Apuração
+      if (task.status === 'docs_received' && nextStatus === 'analysis') {
+        setModalImportOpen(true);
+        return;
+      }
+      // Apuração -> Guias
+      if (task.status === 'analysis' && nextStatus === 'taxes_generated') {
+        setApurationData({ entradas: false, saidas: false });
+        setModalApurationOpen(true);
+        return;
+      }
+      // Guias -> Fechamento
+      if (task.status === 'taxes_generated' && nextStatus === 'done') {
+        setModalClosingOpen(true);
+        return;
+      }
+    }
+
+    // >>> GATILHOS DE RETORNO (ESQUERDA) <<<
+    if (direction === 'prev') {
+      // Fechamento -> Guias (Cancelar)
+      if (task.status === 'done' && nextStatus === 'taxes_generated') {
+        setModalReverseClosingOpen(true);
+        return;
+      }
+      // Guias -> Apuração (Reapurar)
+      if (task.status === 'taxes_generated' && nextStatus === 'analysis') {
+        setModalReverseGuidesOpen(true);
+        return;
+      }
+      // Apuração -> Importação (Refazer Conferência)
+      if (task.status === 'analysis' && nextStatus === 'docs_received') {
+        setModalReverseAnalysisOpen(true);
+        return;
+      }
+      // Importação -> Pendente (Pausar)
+      if (task.status === 'docs_received' && nextStatus === 'pending') {
+        setModalReverseImportOpen(true);
+        return;
+      }
+    }
+
+    // Movimento simples (caso não caia em nenhum gatilho especial)
+    await executeUpdate(task, nextStatus);
+  };
+
+  const executeUpdate = async (task, newStatus, extraFields = {}) => {
+    // Atualização Otimista
+    const prevStatus = task.status;
+    const updatedTask = { ...task, status: newStatus, ...extraFields };
+
+    const sourceItems = columns[prevStatus].items.filter(i => i.id !== task.id);
+    const destItems = [...columns[newStatus].items, updatedTask];
+
+    setColumns(prev => ({
+      ...prev,
+      [prevStatus]: { ...prev[prevStatus], items: sourceItems },
+      [newStatus]: { ...prev[newStatus], items: destItems }
+    }));
+
+    setSelectedCardId(null); // Fecha seleção
+    setActiveTask(null);     // Limpa tarefa ativa
+
+    // Persistência
+    try {
+      await supabase
+        .from('fiscal_closings')
+        .update({ status: newStatus, ...extraFields })
+        .eq('id', task.id);
+    } catch (error) {
+      console.error("Erro ao salvar:", error);
+      fetchData(); // Reverte se der erro
+    }
+  };
+
+  // --- HANDLERS (CONFIRMAÇÕES) ---
+
+  // Avançar
+  const confirmImport = (type) => { 
+    const newData = { ...(activeTask.movement_data || {}), import_type: type };
+    executeUpdate(activeTask, 'analysis', { movement_data: newData });
+    setModalImportOpen(false);
+  };
+
+  const confirmApuration = () => {
+    const newData = { ...(activeTask.movement_data || {}), ...apurationData };
+    executeUpdate(activeTask, 'taxes_generated', { movement_data: newData });
+    setModalApurationOpen(false);
+  };
+
+  const confirmClosing = () => {
+    executeUpdate(activeTask, 'done', { completed_at: new Date().toISOString() });
+    setModalClosingOpen(false);
+  };
+
+  // Retornar (Reverse)
+  const confirmReverseClosing = () => {
+    // Apaga data fim
+    executeUpdate(activeTask, 'taxes_generated', { completed_at: null });
+    setModalReverseClosingOpen(false);
+  };
+
+  const confirmReverseGuides = () => {
+    // Remove flags de apuração
+    const currentData = activeTask.movement_data || {};
+    const newData = { ...currentData };
+    delete newData.entradas;
+    delete newData.saidas;
+    
+    executeUpdate(activeTask, 'analysis', { movement_data: newData });
+    setModalReverseGuidesOpen(false);
+  };
+
+  const confirmReverseAnalysis = () => {
+    // Apaga data início
+    executeUpdate(activeTask, 'docs_received', { started_at: null });
+    setModalReverseAnalysisOpen(false);
+  };
+
+  const confirmReverseImport = () => {
+    // Apenas volta
+    executeUpdate(activeTask, 'pending');
+    setModalReverseImportOpen(false);
+  };
+
+
+  // Sincronização Inicial
   const handleSyncClients = async () => {
     setLoading(true);
     try {
@@ -90,110 +248,11 @@ export default function FiscalClosing() {
       }));
 
       await supabase.from('fiscal_closings').insert(newRows);
-      alert(`${missing.length} novos clientes adicionados!`);
       fetchData();
     } catch (error) {
       alert(error.message);
     } finally {
       setLoading(false);
-    }
-  };
-
-  // --- 3. LÓGICA DE MOVIMENTO (CORE) ---
-  const onDragEnd = async (result) => {
-    const { source, destination } = result;
-
-    if (!destination) return;
-    if (source.droppableId === destination.droppableId && source.index === destination.index) return;
-
-    const destStatus = destination.droppableId;
-
-    // REGRA 1: Indo para 'Em Análise' -> Abre Modal de Movimento
-    if (destStatus === 'analysis') {
-      setPendingMoveDrag(result);
-      setMovementData({ entradas: false, saidas: false }); 
-      setIsMovementModalOpen(true);
-      return; 
-    }
-
-    // REGRA 2: Indo para 'Concluído' -> Abre Modal de Guias
-    if (destStatus === 'done') {
-      setPendingGuideDrag(result);
-      setIsGuideModalOpen(true);
-      return;
-    }
-
-    // Se não caiu em regra especial, move direto
-    executeMove(result);
-  };
-
-  // Função que executa o movimento (Visual + Banco)
-  const executeMove = async (result, extraData = null) => {
-    const { source, destination, draggableId } = result;
-    
-    // Preparação dos dados para atualizar
-    const updatePayload = { status: destination.droppableId };
-    let localUpdates = { status: destination.droppableId };
-
-    // Lógica Específica baseada na Coluna de Destino
-    if (destination.droppableId === 'analysis' && extraData) {
-        // Se for análise, extraData é o objeto de movimento {entradas, saidas}
-        updatePayload.movement_data = extraData;
-        localUpdates.movement_data = extraData;
-    }
-
-    if (destination.droppableId === 'done' && extraData) {
-        // Se for concluído, extraData é a DATA (String ISO)
-        updatePayload.completed_at = extraData;
-        localUpdates.completed_at = extraData;
-    }
-
-    // Atualização Otimista (Front-end)
-    const sourceCol = columns[source.droppableId];
-    const destCol = columns[destination.droppableId];
-    const sourceItems = [...sourceCol.items];
-    const destItems = [...destCol.items];
-    const [movedItem] = sourceItems.splice(source.index, 1);
-    
-    const updatedItem = { 
-      ...movedItem, 
-      ...localUpdates // Aplica as atualizações locais (status + data ou movimento)
-    };
-    
-    destItems.splice(destination.index, 0, updatedItem);
-
-    setColumns({
-      ...columns,
-      [source.droppableId]: { ...sourceCol, items: sourceItems },
-      [destination.droppableId]: { ...destCol, items: destItems },
-    });
-
-    // Atualiza no Banco
-    await supabase
-      .from('fiscal_closings')
-      .update(updatePayload)
-      .eq('id', draggableId);
-  };
-
-  // --- HANDLERS DOS MODAIS ---
-  
-  const confirmMovement = () => {
-    if (pendingMoveDrag) {
-      executeMove(pendingMoveDrag, movementData);
-      setPendingMoveDrag(null);
-      setIsMovementModalOpen(false);
-    }
-  };
-
-  const confirmGuides = () => {
-    if (pendingGuideDrag) {
-      // AQUI ESTÁ A MÁGICA: Gera o timestamp atual
-      const agora = new Date().toISOString();
-      
-      executeMove(pendingGuideDrag, agora); // Passa a data como extraData
-      
-      setPendingGuideDrag(null);
-      setIsGuideModalOpen(false);
     }
   };
 
@@ -222,170 +281,232 @@ export default function FiscalClosing() {
                 className="bg-transparent text-white outline-none font-bold cursor-pointer [&::-webkit-calendar-picker-indicator]:invert"
               />
            </div>
-
-           <button 
-             onClick={handleSyncClients}
-             title="Atualizar lista"
-             className="bg-surface hover:bg-surfaceHover border border-white/10 text-gray-300 hover:text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all"
-           >
-             {Object.values(columns).every(c => c.items.length === 0) ? <RefreshCw className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
-             {Object.values(columns).every(c => c.items.length === 0) ? "Iniciar Mês" : "Atualizar"}
+           <button onClick={handleSyncClients} className="bg-surface hover:bg-surfaceHover border border-white/10 text-gray-300 hover:text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all">
+             <RefreshCw className="w-4 h-4" /> Atualizar
            </button>
         </div>
       </div>
 
-      {/* KANBAN BOARD */}
+      {/* BOARD */}
       <div className="flex-1 overflow-x-auto overflow-y-hidden p-8">
         {loading ? (
            <div className="h-full flex items-center justify-center text-gray-500">Carregando...</div>
         ) : (
-          <DragDropContext onDragEnd={onDragEnd}>
-             <div className="flex h-full gap-6 min-w-[1200px]">
-                {Object.entries(columns).map(([colId, col]) => (
-                   <div key={colId} className="flex-1 flex flex-col min-w-[280px]">
-                      <div className={`flex items-center gap-2 mb-4 px-2 pb-2 border-b-2 ${colId === 'done' ? 'border-emerald-500' : 'border-white/10'}`}>
-                         <div className={`w-3 h-3 rounded-full ${col.color}`}></div>
-                         <span className="font-bold text-gray-300">{col.title}</span>
-                         <span className="ml-auto text-xs bg-white/10 px-2 py-0.5 rounded text-gray-400">{col.items.length}</span>
-                      </div>
+          <div className="flex h-full gap-6 min-w-[1400px]">
+            {Object.entries(columns).map(([colKey, col]) => (
+              <div key={colKey} className="flex-1 flex flex-col min-w-[280px]">
+                <div className={`flex items-center gap-2 mb-4 px-2 pb-2 border-b-2 ${colKey === 'done' ? 'border-emerald-500' : 'border-white/10'}`}>
+                    <div className={`w-3 h-3 rounded-full ${col.color}`}></div>
+                    <span className="font-bold text-gray-300">{col.title}</span>
+                    <span className="ml-auto text-xs bg-white/10 px-2 py-0.5 rounded text-gray-400">{col.items.length}</span>
+                </div>
 
-                      <Droppable droppableId={colId}>
-                         {(provided, snapshot) => (
-                            <div
-                               {...provided.droppableProps}
-                               ref={provided.innerRef}
-                               className={`flex-1 rounded-2xl p-2 transition-colors overflow-y-auto custom-scrollbar 
-                                 ${snapshot.isDraggingOver ? 'bg-white/5 border border-brand-cyan/30' : 'bg-surface/20 border border-white/5'}
-                               `}
-                            >
-                               {col.items.map((item, index) => (
-                                  <Draggable key={item.id} draggableId={item.id.toString()} index={index}>
-                                     {(provided, snapshot) => (
-                                        <div
-                                           ref={provided.innerRef}
-                                           {...provided.draggableProps}
-                                           {...provided.dragHandleProps}
-                                           className={`bg-surface p-4 rounded-xl mb-3 border border-white/5 shadow-sm hover:border-brand-cyan/40 hover:shadow-lg transition-all
-                                              ${snapshot.isDragging ? 'rotate-2 scale-105 z-50 border-brand-cyan' : ''}
-                                           `}
-                                           style={provided.draggableProps.style}
-                                        >
-                                           <div className="flex justify-between items-start mb-2">
-                                              <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider bg-black/20 px-1.5 py-0.5 rounded">
-                                                 {item.clients?.regime || 'Indefinido'}
-                                              </span>
-                                              
-                                              {/* Ícone de Movimento */}
-                                              {item.movement_data && (item.movement_data.entradas || item.movement_data.saidas) && (
-                                                <div className="flex gap-1" title="Movimento registrado">
-                                                  {item.movement_data.entradas && <span className="w-2 h-2 rounded-full bg-emerald-500"></span>}
-                                                  {item.movement_data.saidas && <span className="w-2 h-2 rounded-full bg-red-500"></span>}
-                                                </div>
-                                              )}
-                                           </div>
-                                           
-                                           <h3 className="text-white font-bold text-sm leading-snug mb-1">
-                                              {item.clients?.razao_social}
-                                           </h3>
-                                           
-                                           <div className="flex items-center justify-between mt-3 pt-2 border-t border-white/5">
-                                              <span className="text-[10px] text-gray-500">ID: #{item.id}</span>
-                                              
-                                              {/* CONDICIONAL: Se for Concluído, mostra a DATA */}
-                                              {colId === 'done' ? (
-                                                <div className="flex items-center gap-1">
-                                                  <CheckCircle className="w-3 h-3 text-emerald-500" />
-                                                  <span className="text-[10px] text-emerald-500 font-bold">
-                                                    {item.completed_at 
-                                                      ? new Date(item.completed_at).toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute:'2-digit'})
-                                                      : 'Concluído'}
-                                                  </span>
-                                                </div>
-                                              ) : (
-                                                // Nas outras colunas, mostra o ícone check padrão (ou nada)
-                                                colId === 'done' && <CheckCircle className="w-4 h-4 text-emerald-500" />
-                                              )}
-                                           </div>
+                <div className="flex-1 rounded-2xl p-2 bg-surface/20 border border-white/5 overflow-y-auto custom-scrollbar">
+                  {col.items.map((item) => {
+                    const isSelected = selectedCardId === item.id;
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => setSelectedCardId(isSelected ? null : item.id)}
+                        className={`relative bg-surface p-4 rounded-xl mb-3 border transition-all cursor-pointer
+                          ${isSelected ? 'border-brand-cyan ring-1 ring-brand-cyan/50 shadow-lg scale-[1.02] z-10' : 'border-white/5 hover:border-white/20'}
+                        `}
+                      >
+                        <div className="flex justify-between items-start mb-2">
+                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider bg-black/20 px-1.5 py-0.5 rounded">
+                                {item.clients?.regime || 'Indefinido'}
+                            </span>
+                            {item.movement_data && (
+                                <div className="flex gap-1">
+                                    {item.movement_data.import_type && (
+                                        <span className="text-[9px] bg-blue-500/20 text-blue-300 px-1 rounded">
+                                            {item.movement_data.import_type === 'Automática' ? 'AUTO' : 'MAN'}
+                                        </span>
+                                    )}
+                                    {(item.movement_data.entradas || item.movement_data.saidas) && (
+                                        <div className="flex gap-1">
+                                            {item.movement_data.entradas && <span className="w-2 h-2 rounded-full bg-emerald-500" title="Entradas"></span>}
+                                            {item.movement_data.saidas && <span className="w-2 h-2 rounded-full bg-red-500" title="Saídas"></span>}
                                         </div>
-                                     )}
-                                  </Draggable>
-                               ))}
-                               {provided.placeholder}
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                        
+                        <h3 className="text-white font-bold text-sm leading-snug mb-3">{item.clients?.razao_social}</h3>
+
+                        {colKey === 'done' && (
+                            <div className="mt-2 pt-2 border-t border-white/10 space-y-1">
+                                <div className="flex justify-between text-[10px] text-gray-400">
+                                    <span>Início:</span>
+                                    <span className="text-gray-300">{item.started_at ? new Date(item.started_at).toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '-'}</span>
+                                </div>
+                                <div className="flex justify-between text-[10px] text-emerald-400 font-bold">
+                                    <span>Fim:</span>
+                                    <span>{item.completed_at ? new Date(item.completed_at).toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '-'}</span>
+                                </div>
                             </div>
-                         )}
-                      </Droppable>
-                   </div>
-                ))}
-             </div>
-          </DragDropContext>
+                        )}
+
+                        {/* --- AÇÕES DE NAVEGAÇÃO --- */}
+                        {isSelected && (
+                            <div className="absolute inset-0 bg-black/60 backdrop-blur-[1px] rounded-xl flex items-center justify-between px-2 animate-fade-in" onClick={(e) => e.stopPropagation()}>
+                                
+                                {/* SETA ESQUERDA = VOLTAR (PREV) */}
+                                {colKey !== 'pending' ? (
+                                    <button 
+                                        onClick={() => handleMove(item, 'prev')}
+                                        className="p-2 bg-red-500/20 hover:bg-red-500 rounded-full text-white border border-red-500/50 transition-all"
+                                        title="Voltar etapa"
+                                    >
+                                        <ArrowLeft className="w-6 h-6" />
+                                    </button>
+                                ) : <div />}
+
+                                <button onClick={() => setSelectedCardId(null)} className="text-xs text-gray-400 hover:text-white mt-12">Fechar</button>
+
+                                {/* SETA DIREITA = AVANÇAR (NEXT) */}
+                                {colKey !== 'done' ? (
+                                    <button 
+                                        onClick={() => handleMove(item, 'next')}
+                                        className="p-2 bg-brand-cyan hover:bg-cyan-600 rounded-full text-white shadow-lg shadow-cyan-500/20 transition-all"
+                                        title="Avançar etapa"
+                                    >
+                                        <ArrowRight className="w-6 h-6" />
+                                    </button>
+                                ) : <div />}
+                            </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
-      {/* --- MODAL 1: REGISTRO DE MOVIMENTO --- */}
-      {isMovementModalOpen && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 animate-fade-in p-4">
-           <div className="bg-surface rounded-2xl w-full max-w-md border border-white/10 shadow-2xl overflow-hidden p-6 space-y-6">
-              <div className="flex justify-between items-center">
-                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                   <BoxSelect className="w-6 h-6 text-brand-cyan" /> Registro de Movimento
-                 </h2>
-                 <button onClick={() => {setIsMovementModalOpen(false); setPendingMoveDrag(null);}} className="text-gray-400 hover:text-white">
-                   <X className="w-6 h-6" />
-                 </button>
-              </div>
-              <p className="text-gray-400 text-sm">Selecione os tipos de movimento fiscal:</p>
-              <div className="space-y-3">
-                 <label className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer transition-all ${movementData.entradas ? 'bg-brand-cyan/20 border-brand-cyan' : 'bg-background border-white/10 hover:bg-white/5'}`}>
-                    <input type="checkbox" className="w-5 h-5 accent-brand-cyan" checked={movementData.entradas} onChange={(e) => setMovementData({...movementData, entradas: e.target.checked})} />
-                    <span className="text-white font-bold">Entradas (Compras)</span>
+      {/* --- MODAIS DE AVANÇO (FORWARD) --- */}
+
+      {modalImportOpen && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-surface rounded-2xl w-full max-w-sm border border-white/10 p-6">
+            <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+              <Server className="w-5 h-5 text-blue-400" /> Como foi importado?
+            </h2>
+            <div className="space-y-3">
+              <button onClick={() => confirmImport('Automática')} className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-xl text-left border border-white/10">
+                <span className="block text-brand-cyan font-bold">Automática</span>
+              </button>
+              <button onClick={() => confirmImport('Manual')} className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-xl text-left border border-white/10">
+                <span className="block text-yellow-500 font-bold">Manual</span>
+              </button>
+            </div>
+            <button onClick={() => setModalImportOpen(false)} className="mt-4 w-full text-gray-500 text-sm">Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {modalApurationOpen && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-surface rounded-2xl w-full max-w-sm border border-white/10 p-6">
+            <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+              <BoxSelect className="w-5 h-5 text-yellow-500" /> O que foi apurado?
+            </h2>
+            <div className="space-y-3 mb-6">
+                 <label className="flex items-center gap-3 p-4 rounded-xl border border-white/10 cursor-pointer hover:bg-white/5">
+                    <input type="checkbox" className="w-5 h-5 accent-brand-cyan" checked={apurationData.entradas} onChange={(e) => setApurationData({...apurationData, entradas: e.target.checked})} />
+                    <span className="text-white font-bold">Entradas</span>
                  </label>
-                 <label className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer transition-all ${movementData.saidas ? 'bg-brand-cyan/20 border-brand-cyan' : 'bg-background border-white/10 hover:bg-white/5'}`}>
-                    <input type="checkbox" className="w-5 h-5 accent-brand-cyan" checked={movementData.saidas} onChange={(e) => setMovementData({...movementData, saidas: e.target.checked})} />
-                    <span className="text-white font-bold">Saídas (Vendas)</span>
+                 <label className="flex items-center gap-3 p-4 rounded-xl border border-white/10 cursor-pointer hover:bg-white/5">
+                    <input type="checkbox" className="w-5 h-5 accent-brand-cyan" checked={apurationData.saidas} onChange={(e) => setApurationData({...apurationData, saidas: e.target.checked})} />
+                    <span className="text-white font-bold">Saídas</span>
                  </label>
+            </div>
+            <button onClick={confirmApuration} disabled={!apurationData.entradas && !apurationData.saidas} className="w-full bg-brand-cyan disabled:bg-gray-600 text-white font-bold py-3 rounded-xl">Confirmar</button>
+            <button onClick={() => setModalApurationOpen(false)} className="mt-3 w-full text-gray-500 text-sm">Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {modalClosingOpen && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-fade-in">
+           <div className="bg-surface rounded-2xl w-full max-w-sm border border-white/10 p-6 relative overflow-hidden">
+              <Send className="absolute top-4 right-4 text-white/5 w-24 h-24 -rotate-12" />
+              <div className="relative z-10">
+                <h2 className="text-xl font-bold text-white mb-2 flex items-center gap-2">
+                   <AlertTriangle className="w-6 h-6 text-emerald-500" /> Finalizar?
+                </h2>
+                <p className="text-white text-lg font-bold mb-6">As guias foram enviadas?</p>
+                <div className="flex gap-3">
+                    <button onClick={() => setModalClosingOpen(false)} className="flex-1 py-3 bg-white/5 hover:bg-white/10 rounded-xl text-gray-300 font-bold">Voltar</button>
+                    <button onClick={confirmClosing} className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold">Sim, enviadas</button>
+                </div>
               </div>
-              <button onClick={confirmMovement} className="w-full bg-brand-cyan hover:bg-cyan-600 text-white font-bold py-3 rounded-xl shadow-lg active:scale-95">Confirmar e Mover</button>
            </div>
         </div>
       )}
 
-      {/* --- MODAL 2: CONFIRMAÇÃO DE GUIAS (NOVO) --- */}
-      {isGuideModalOpen && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 animate-fade-in p-4">
-           <div className="bg-surface rounded-2xl w-full max-w-md border border-white/10 shadow-2xl overflow-hidden p-6 space-y-6 relative">
-              
-              {/* Ícone de Fundo Decorativo */}
-              <Send className="absolute top-4 right-4 text-white/5 w-24 h-24 -rotate-12" />
+      {/* --- MODAIS DE RETORNO (REVERSE) --- */}
 
-              <div className="flex justify-between items-center relative z-10">
-                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                   <AlertTriangle className="w-6 h-6 text-yellow-500" /> Confirmação
-                 </h2>
-              </div>
+      {modalReverseClosingOpen && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-surface rounded-2xl w-full max-w-sm border border-red-500/30 p-6">
+            <h2 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
+              <XCircle className="w-5 h-5 text-red-500" /> Cancelar Fechamento?
+            </h2>
+            <p className="text-gray-400 text-sm mb-6">Isso apagará a data de finalização. Deseja continuar?</p>
+            <div className="flex gap-3">
+              <button onClick={() => setModalReverseClosingOpen(false)} className="flex-1 py-2 bg-white/5 rounded-lg text-gray-300">Não</button>
+              <button onClick={confirmReverseClosing} className="flex-1 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-white font-bold">Sim, cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
-              <div className="relative z-10">
-                <p className="text-white text-lg font-bold mb-2">As guias de impostos já foram enviadas?</p>
-                <p className="text-gray-400 text-sm">
-                  Ao confirmar, o fechamento desta empresa será marcado como <span className="text-emerald-500 font-bold">Concluído</span>.
-                </p>
-              </div>
+      {modalReverseGuidesOpen && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-surface rounded-2xl w-full max-w-sm border border-yellow-500/30 p-6">
+            <h2 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
+              <RotateCcw className="w-5 h-5 text-yellow-500" /> Reapurar Movimento?
+            </h2>
+            <p className="text-gray-400 text-sm mb-6">Isso removerá as definições de Entradas/Saídas. Deseja reapurar?</p>
+            <div className="flex gap-3">
+              <button onClick={() => setModalReverseGuidesOpen(false)} className="flex-1 py-2 bg-white/5 rounded-lg text-gray-300">Não</button>
+              <button onClick={confirmReverseGuides} className="flex-1 py-2 bg-yellow-600 hover:bg-yellow-500 rounded-lg text-white font-bold">Sim, reapurar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
-              <div className="flex gap-3 relative z-10 pt-2">
-                <button 
-                  onClick={() => {setIsGuideModalOpen(false); setPendingGuideDrag(null);}} 
-                  className="flex-1 py-3 bg-surface hover:bg-white/5 border border-white/10 rounded-xl text-gray-400 font-bold transition-colors"
-                >
-                  Ainda não
-                </button>
-                <button 
-                  onClick={confirmGuides}
-                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold shadow-lg shadow-emerald-900/20 active:scale-95 transition-all"
-                >
-                  Sim, enviadas!
-                </button>
-              </div>
+      {modalReverseAnalysisOpen && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-surface rounded-2xl w-full max-w-sm border border-blue-500/30 p-6">
+            <h2 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
+              <RotateCcw className="w-5 h-5 text-blue-500" /> Refazer Conferência?
+            </h2>
+            <p className="text-gray-400 text-sm mb-6">Isso apagará a data de início do processo. Confirmar?</p>
+            <div className="flex gap-3">
+              <button onClick={() => setModalReverseAnalysisOpen(false)} className="flex-1 py-2 bg-white/5 rounded-lg text-gray-300">Não</button>
+              <button onClick={confirmReverseAnalysis} className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-white font-bold">Sim, refazer</button>
+            </div>
+          </div>
+        </div>
+      )}
 
-           </div>
+      {modalReverseImportOpen && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-surface rounded-2xl w-full max-w-sm border border-white/10 p-6">
+            <h2 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
+              <PauseCircle className="w-5 h-5 text-gray-400" /> Pausar Fechamento?
+            </h2>
+            <p className="text-gray-400 text-sm mb-6">Deseja trabalhar no fechamento desta empresa em outro momento?</p>
+            <div className="flex gap-3">
+              <button onClick={() => setModalReverseImportOpen(false)} className="flex-1 py-2 bg-white/5 rounded-lg text-gray-300">Cancelar</button>
+              <button onClick={confirmReverseImport} className="flex-1 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-white font-bold">Sim, pausar</button>
+            </div>
+          </div>
         </div>
       )}
 
