@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../supabaseClient'; // Importando Supabase
+import { supabase } from '../supabaseClient';
 import { 
   ChevronLeft, Plus, Search, 
   Edit2, Trash2, X, Building, 
   FileText, Key, ShieldCheck, 
-  AlertTriangle, AlertCircle, ExternalLink, Eye, EyeOff
+  AlertTriangle, AlertCircle, ExternalLink, Eye, EyeOff, User
 } from 'lucide-react';
 
 export default function Clients() {
   const navigate = useNavigate();
   const [clients, setClients] = useState([]);
+  const [users, setUsers] = useState([]); // Lista de usuários da equipe
   const [loading, setLoading] = useState(true);
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -21,7 +22,7 @@ export default function Clients() {
   const [activeTab, setActiveTab] = useState('basic');
   const [isEditing, setIsEditing] = useState(false);
 
-  // Form State (Nomes iguais ao Banco de Dados)
+  // Form State (Adicionado fiscal_team_id)
   const initialForm = { 
     id: null, 
     razao_social: '', 
@@ -31,16 +32,18 @@ export default function Clients() {
     ie: '', 
     cert_val: '', 
     pref_link: '', 
-    pref_pass: '' 
+    pref_pass: '',
+    fiscal_team_id: '' // Novo campo
   };
   const [formData, setFormData] = useState(initialForm);
 
   // --- 1. BUSCAR DADOS (READ) ---
   const fetchClients = async () => {
     setLoading(true);
+    // Trazemos também os dados do responsável (se quiser mostrar na tabela futuramente)
     const { data, error } = await supabase
       .from('clients')
-      .select('*')
+      .select('*, app_users(id, name)') 
       .order('razao_social', { ascending: true });
 
     if (error) console.error('Erro ao buscar clientes:', error);
@@ -48,15 +51,25 @@ export default function Clients() {
     setLoading(false);
   };
 
+  const fetchUsers = async () => {
+    const { data, error } = await supabase
+      .from('app_users')
+      .select('id, name')
+      .order('name');
+    
+    if (!error && data) setUsers(data);
+  };
+
   useEffect(() => {
     fetchClients();
+    fetchUsers();
   }, []);
 
   // --- HELPERS ---
   const getCertStatus = (dateString) => {
     if (!dateString) return { color: 'text-gray-500', icon: ShieldCheck, label: 'Não informado', bg: 'bg-white/5' };
     
-    const today = new Date(); // Data real de hoje
+    const today = new Date();
     const valDate = new Date(dateString);
     const diffTime = valDate - today;
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -74,7 +87,10 @@ export default function Clients() {
   const handleOpenModal = (client = null) => {
     setActiveTab('basic'); 
     if (client) {
-      setFormData(client);
+      setFormData({
+        ...client,
+        fiscal_team_id: client.fiscal_team_id || '' // Garante que não seja null/undefined no input
+      });
       setIsEditing(true);
     } else {
       setFormData(initialForm);
@@ -87,11 +103,12 @@ export default function Clients() {
   const handleSave = async () => {
     if (!formData.razao_social.trim()) return;
 
-    // Removemos o ID do payload para o insert (o banco gera sozinho)
-    const { id, ...payload } = formData;
+    // Removemos o ID e o objeto 'app_users' (join) do payload
+    const { id, app_users, ...payload } = formData;
 
-    // Tratamento para datas vazias (Supabase não gosta de string vazia em campo date)
+    // Tratamento para campos vazios
     if (payload.cert_val === '') payload.cert_val = null;
+    if (payload.fiscal_team_id === '') payload.fiscal_team_id = null;
 
     if (isEditing) {
       const { error } = await supabase
@@ -125,7 +142,6 @@ export default function Clients() {
     }
   };
 
-  // Filtro (Client-side, já que a lista não será gigante na V1)
   const filteredClients = clients.filter(c => 
     c.razao_social.toLowerCase().includes(searchTerm.toLowerCase()) ||
     c.cnpj.includes(searchTerm)
@@ -198,6 +214,13 @@ export default function Clients() {
                         <div className="flex flex-col">
                           <span className="text-white font-bold text-sm">{client.razao_social}</span>
                           <span className="text-xs text-gray-500 font-mono mt-1">{client.cnpj}</span>
+                          {/* Exibe o responsável na lista se existir */}
+                          {client.app_users && (
+                            <div className="flex items-center gap-1 mt-2 text-xs text-brand-cyan">
+                                <User className="w-3 h-3" />
+                                <span>{client.app_users.name}</span>
+                            </div>
+                          )}
                         </div>
                       </td>
 
@@ -360,6 +383,28 @@ export default function Clients() {
                 {/* ABA 2: FISCAL & ACESSO */}
                 {activeTab === 'fiscal' && (
                   <div className="space-y-6 animate-fade-in">
+                    
+                    {/* NOVA SEÇÃO: Responsável Fiscal */}
+                    <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+                      <div className="flex items-center gap-2 mb-3 text-brand-cyan">
+                        <User className="w-5 h-5" />
+                        <h3 className="font-bold text-sm">Responsável Fiscal</h3>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-gray-500 uppercase">Integrante da Equipe</label>
+                        <select 
+                          value={formData.fiscal_team_id || ''}
+                          onChange={(e) => setFormData({...formData, fiscal_team_id: e.target.value})}
+                          className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-white outline-none focus:border-brand-cyan"
+                        >
+                          <option value="">Selecione um responsável...</option>
+                          {users.map(u => (
+                            <option key={u.id} value={u.id}>{u.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
                     <div className="bg-white/5 p-4 rounded-xl border border-white/10">
                       <div className="flex items-center gap-2 mb-3 text-brand-cyan">
                         <ShieldCheck className="w-5 h-5" />
