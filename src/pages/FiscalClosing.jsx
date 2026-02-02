@@ -43,6 +43,7 @@ export default function FiscalClosing() {
     const compDate = `${selectedCompetence}-01`;
 
     try {
+      // Importante: garantir que completed_at venha no select (o * já traz, mas bom lembrar)
       const { data, error } = await supabase
         .from('fiscal_closings')
         .select(`*, clients(id, razao_social, regime)`)
@@ -130,7 +131,24 @@ export default function FiscalClosing() {
   const executeMove = async (result, extraData = null) => {
     const { source, destination, draggableId } = result;
     
-    // Atualização Otimista
+    // Preparação dos dados para atualizar
+    const updatePayload = { status: destination.droppableId };
+    let localUpdates = { status: destination.droppableId };
+
+    // Lógica Específica baseada na Coluna de Destino
+    if (destination.droppableId === 'analysis' && extraData) {
+        // Se for análise, extraData é o objeto de movimento {entradas, saidas}
+        updatePayload.movement_data = extraData;
+        localUpdates.movement_data = extraData;
+    }
+
+    if (destination.droppableId === 'done' && extraData) {
+        // Se for concluído, extraData é a DATA (String ISO)
+        updatePayload.completed_at = extraData;
+        localUpdates.completed_at = extraData;
+    }
+
+    // Atualização Otimista (Front-end)
     const sourceCol = columns[source.droppableId];
     const destCol = columns[destination.droppableId];
     const sourceItems = [...sourceCol.items];
@@ -139,8 +157,7 @@ export default function FiscalClosing() {
     
     const updatedItem = { 
       ...movedItem, 
-      status: destination.droppableId,
-      movement_data: extraData || movedItem.movement_data 
+      ...localUpdates // Aplica as atualizações locais (status + data ou movimento)
     };
     
     destItems.splice(destination.index, 0, updatedItem);
@@ -152,9 +169,6 @@ export default function FiscalClosing() {
     });
 
     // Atualiza no Banco
-    const updatePayload = { status: destination.droppableId };
-    if (extraData) updatePayload.movement_data = extraData;
-
     await supabase
       .from('fiscal_closings')
       .update(updatePayload)
@@ -173,7 +187,11 @@ export default function FiscalClosing() {
 
   const confirmGuides = () => {
     if (pendingGuideDrag) {
-      executeMove(pendingGuideDrag); // Não precisa de dados extras, só move
+      // AQUI ESTÁ A MÁGICA: Gera o timestamp atual
+      const agora = new Date().toISOString();
+      
+      executeMove(pendingGuideDrag, agora); // Passa a data como extraData
+      
       setPendingGuideDrag(null);
       setIsGuideModalOpen(false);
     }
@@ -272,7 +290,21 @@ export default function FiscalClosing() {
                                            
                                            <div className="flex items-center justify-between mt-3 pt-2 border-t border-white/5">
                                               <span className="text-[10px] text-gray-500">ID: #{item.id}</span>
-                                              {colId === 'done' && <CheckCircle className="w-4 h-4 text-emerald-500" />}
+                                              
+                                              {/* CONDICIONAL: Se for Concluído, mostra a DATA */}
+                                              {colId === 'done' ? (
+                                                <div className="flex items-center gap-1">
+                                                  <CheckCircle className="w-3 h-3 text-emerald-500" />
+                                                  <span className="text-[10px] text-emerald-500 font-bold">
+                                                    {item.completed_at 
+                                                      ? new Date(item.completed_at).toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute:'2-digit'})
+                                                      : 'Concluído'}
+                                                  </span>
+                                                </div>
+                                              ) : (
+                                                // Nas outras colunas, mostra o ícone check padrão (ou nada)
+                                                colId === 'done' && <CheckCircle className="w-4 h-4 text-emerald-500" />
+                                              )}
                                            </div>
                                         </div>
                                      )}
