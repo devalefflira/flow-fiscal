@@ -16,7 +16,6 @@ export default function Home() {
   // Estados para o efeito de digitação
   const [displayedText, setDisplayedText] = useState('');
   const fullText = "O que vamos fazer agora?"; 
-
   const toggleMenu = () => setIsMenuOpen(!isMenuOpen);
 
   // Efeito de Máquina de Escrever
@@ -36,7 +35,7 @@ export default function Home() {
     }
   }, [isMenuOpen]);
 
-  // Componente de Item do Menu (Refatorado para Links Individuais)
+  // Componente de Item do Menu
   const MenuItem = ({ icon: Icon, title, items, side, vertical, onTitleClick, delayClass }) => {
     const isLeft = side === 'left';
     const isTop = vertical === 'top';
@@ -44,7 +43,6 @@ export default function Home() {
     const textAlign = isLeft ? 'text-left' : 'text-right';
     const headerDirection = isLeft ? 'flex-row' : 'flex-row-reverse';
     const borderSide = isLeft ? 'border-l-2 pl-3' : 'border-r-2 pr-3';
-
     const translateX = isLeft ? '-translate-x-[16rem]' : 'translate-x-[16rem]';
     const translateY = isTop ? '-translate-y-[9rem]' : 'translate-y-[9rem]';
 
@@ -140,22 +138,22 @@ export default function Home() {
       {/* 1. TAREFAS */}
       <MenuItem 
         side="left" vertical="top" icon={CheckSquare} title="Tarefas"
-        onTitleClick={() => navigate('/dashboard/tarefas')}
+        onTitleClick={() => navigate('/tarefas/matriz')} // Atualizado para ir direto pra Matriz
         items={[
-          { label: 'Adicionar Tarefas', path: '/tarefas/adicionar' },
           { label: 'Matriz de Eisenhower', path: '/tarefas/matriz' }
+          // Removido "Adicionar Tarefas"
         ]}
         delayClass="delay-0"
       />
 
-      {/* 2. PROCESSOS (CORRIGIDO AQUI) */}
+      {/* 2. PROCESSOS */}
       <MenuItem 
         side="right" vertical="top" icon={InfinityIcon} title="Processos"
-        onTitleClick={() => navigate('/processos/fechamento')} // Link padrão do título
+        onTitleClick={() => navigate('/processos/fechamento')}
         items={[
           { label: 'Fechamento Fiscal', path: '/processos/fechamento' },
-          { label: 'Obrigações Acessórias', path: '/processos/obrigacoes' }, // <--- Link correto
-          { label: 'Controle de Parcelamentos', path: '/processos/parcelamentos' } // Futuro
+          { label: 'Obrigações Acessórias', path: '/processos/obrigacoes' },
+          { label: 'Controle de Parcelamentos', path: '/processos/parcelamentos' }
         ]}
         delayClass="delay-[50ms]"
       />
@@ -176,14 +174,16 @@ export default function Home() {
         side="right" vertical="bottom" icon={Folder} title="Cadastros"
         onTitleClick={() => console.log('Ir para Cadastros')}
         items={[
-          { label: 'Categorias', path: '/cadastros/categorias' },
+          { label: 'Categorias de Tarefas', path: '/cadastros/categorias-tarefas' }, // Novo Link
+          { label: 'Origem', path: '/cadastros/categorias' }, // Renomeado de Categorias para Origem
           { label: 'Clientes', path: '/cadastros/clientes' },
           { label: 'Guias de Tributos', path: '/cadastros/guias' },
           { label: 'Equipe', path: '/cadastros/usuarios' },
-          { label: 'Tipos de Obrigações', path: '/cadastros/obrigacoes' } // <--- Final
+          { label: 'Tipos de Obrigações', path: '/cadastros/obrigacoes' }
         ]}
         delayClass="delay-[150ms]"
       />
+
       <button 
         onClick={() => navigate('/login')}
         className="absolute bottom-8 right-8 text-gray-400 hover:text-red-500 transition-colors flex items-center gap-2 z-50 group font-medium"

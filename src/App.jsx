@@ -4,7 +4,6 @@ import Home from './pages/Home';
 import TasksDashboard from './pages/TasksDashboard';
 import FiscalDashboard from './pages/FiscalDashboard';
 import EisenhowerMatrix from './pages/EisenhowerMatrix'; // Importando a Matriz
-import AddTasks from './pages/AddTasks'; // Importe a nova tela
 import FiscalClosing from './pages/FiscalClosing';
 import AccessoryObligations from './pages/AccessoryObligations';
 import InstallmentControl from './pages/InstallmentControl';
@@ -13,6 +12,7 @@ import Clients from './pages/Clients';
 import TaxGuides from './pages/TaxGuides';
 import Users from './pages/Users';
 import ObligationTypes from './pages/ObligationTypes';
+import TaskCategories from './pages/TaskCategories';
 
 function App() {
   return (
@@ -50,11 +50,11 @@ function App() {
         {/* Nova Rota: Usuários */}
         <Route path="/cadastros/usuarios" element={<Users />} />
 
+        {/* Nova Rota: Categorias de Tarefas (Padronização) */}
+        <Route path="/cadastros/categorias-tarefas" element={<TaskCategories />} />
+
         {/* Nova Rota: Tipos de Obrigações */}
         <Route path="/cadastros/obrigacoes" element={<ObligationTypes />} />
-
-        {/* Rota para Adicionar Tarefas */}
-        <Route path="/tarefas/adicionar" element={<AddTasks />} />
         
       </Routes>
     </BrowserRouter>
