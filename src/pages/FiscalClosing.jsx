@@ -37,6 +37,22 @@ export default function FiscalClosing() {
   
   const [apurationData, setApurationData] = useState({ entradas: false, saidas: false });
 
+  // Novo estado para o erro da importação manual
+  const [importError, setImportError] = useState('');
+  const [showManualInput, setShowManualInput] = useState(false); // Controla a exibição do input
+
+  // Opções de Erro (Padronização)
+  const errorOptions = [
+    "Sistema não importou",
+    "Sistema importou parcialmente",
+    "Sistema importou canceladas com valores",
+    "Sistema importou duplicadas",
+    "Importou parcialmente e canceladas com valores",
+    "Importou parcialmente e duplicadas",
+    "Importou parcialmente, canceladas com valores e duplicadas",
+    "Outro motivo não especificado anteriormente"
+  ];
+
   // --- MODAIS DE RETORNO (REVERSE) ---
   const [modalReverseClosingOpen, setModalReverseClosingOpen] = useState(false);   // Done -> Taxes
   const [modalReverseGuidesOpen, setModalReverseGuidesOpen] = useState(false);     // Taxes -> Analysis
@@ -104,6 +120,8 @@ export default function FiscalClosing() {
       }
       // Importação -> Apuração
       if (task.status === 'docs_received' && nextStatus === 'analysis') {
+        setImportError(''); // Reseta erro anterior
+        setShowManualInput(false); // Reseta visualização manual
         setModalImportOpen(true);
         return;
       }
@@ -181,8 +199,21 @@ export default function FiscalClosing() {
 
   // Avançar
   const confirmImport = (type) => { 
+    if (type === 'Manual' && !importError) {
+        alert("Por favor, selecione o erro ocorrido.");
+        return;
+    }
+
     const newData = { ...(activeTask.movement_data || {}), import_type: type };
-    executeUpdate(activeTask, 'analysis', { movement_data: newData });
+    
+    // Se for manual, salva o erro. Se for auto, limpa o erro (null)
+    const extraData = { 
+        movement_data: newData,
+        import_type: type === 'Automática' ? 'automatic' : 'manual',
+        import_error_details: type === 'Manual' ? importError : null
+    };
+
+    executeUpdate(activeTask, 'analysis', extraData);
     setModalImportOpen(false);
   };
 
@@ -319,7 +350,7 @@ export default function FiscalClosing() {
                             {item.movement_data && (
                                 <div className="flex gap-1">
                                     {item.movement_data.import_type && (
-                                        <span className="text-[9px] bg-blue-500/20 text-blue-300 px-1 rounded">
+                                        <span className={`text-[9px] px-1 rounded ${item.movement_data.import_type === 'Manual' ? 'bg-red-500/20 text-red-300' : 'bg-blue-500/20 text-blue-300'}`}>
                                             {item.movement_data.import_type === 'Automática' ? 'AUTO' : 'MAN'}
                                         </span>
                                     )}
@@ -395,15 +426,49 @@ export default function FiscalClosing() {
             <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
               <Server className="w-5 h-5 text-blue-400" /> Como foi importado?
             </h2>
-            <div className="space-y-3">
-              <button onClick={() => confirmImport('Automática')} className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-xl text-left border border-white/10">
-                <span className="block text-brand-cyan font-bold">Automática</span>
-              </button>
-              <button onClick={() => confirmImport('Manual')} className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-xl text-left border border-white/10">
-                <span className="block text-yellow-500 font-bold">Manual</span>
-              </button>
-            </div>
-            <button onClick={() => setModalImportOpen(false)} className="mt-4 w-full text-gray-500 text-sm">Cancelar</button>
+            
+            {/* Opções Iniciais */}
+            {!showManualInput && (
+                <div className="space-y-3">
+                  <button onClick={() => confirmImport('Automática')} className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-xl text-left border border-white/10">
+                    <span className="block text-brand-cyan font-bold">Automática</span>
+                  </button>
+                  <button onClick={() => setShowManualInput(true)} className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-xl text-left border border-white/10">
+                    <span className="block text-yellow-500 font-bold">Manual</span>
+                  </button>
+                </div>
+            )}
+
+            {/* Input para Manual */}
+            {showManualInput && (
+                <div className="space-y-4 animate-fade-in">
+                    <div>
+                        <label className="text-xs font-bold text-red-400 uppercase mb-2 block">Selecione o erro ocorrido</label>
+                        <select
+                            value={importError}
+                            onChange={(e) => setImportError(e.target.value)}
+                            className="w-full bg-black/20 border border-red-500/30 rounded-lg p-3 text-white text-sm outline-none focus:border-red-500"
+                        >
+                            <option value="">Selecione uma opção...</option>
+                            {errorOptions.map((opt, index) => (
+                                <option key={index} value={opt} className="bg-surface text-white">{opt}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <button 
+                        onClick={() => confirmImport('Manual')} 
+                        disabled={!importError}
+                        className="w-full py-2 bg-red-600 hover:bg-red-500 disabled:bg-gray-700 disabled:cursor-not-allowed rounded-lg text-white font-bold transition-colors"
+                    >
+                        Salvar e Continuar
+                    </button>
+                    <button onClick={() => setShowManualInput(false)} className="w-full text-gray-500 text-sm hover:text-white">Voltar</button>
+                </div>
+            )}
+
+            {!showManualInput && (
+                <button onClick={() => setModalImportOpen(false)} className="mt-4 w-full text-gray-500 text-sm">Cancelar</button>
+            )}
           </div>
         </div>
       )}
