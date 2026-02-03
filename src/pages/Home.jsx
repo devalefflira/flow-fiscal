@@ -153,7 +153,8 @@ export default function Home() {
         items={[
           { label: 'Fechamento Fiscal', path: '/processos/fechamento' },
           { label: 'Obrigações Acessórias', path: '/processos/obrigacoes' },
-          { label: 'Controle de Parcelamentos', path: '/processos/parcelamentos' }
+          { label: 'Controle de Parcelamentos', path: '/processos/parcelamentos' },
+          { label: 'Relatórios', path: '/processos/relatorios' } // <-- NOVO ITEM
         ]}
         delayClass="delay-[50ms]"
       />

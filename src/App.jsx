@@ -6,6 +6,7 @@ import FiscalDashboard from './pages/FiscalDashboard';
 import EisenhowerMatrix from './pages/EisenhowerMatrix'; // Importando a Matriz
 import FiscalClosing from './pages/FiscalClosing';
 import AccessoryObligations from './pages/AccessoryObligations';
+import Reports from './pages/Reports';
 import InstallmentControl from './pages/InstallmentControl';
 import Categories from './pages/Categories';
 import Clients from './pages/Clients';
@@ -37,6 +38,9 @@ function App() {
 
         {/* Nova Rota: Parcelamentos */}
         <Route path="/processos/parcelamentos" element={<InstallmentControl />} />
+
+        {/* Nova Rota: Relatórios */}
+        <Route path="/processos/relatorios" element={<Reports />} />
 
         {/* Nova Rota: Categorias */}
         <Route path="/cadastros/categorias" element={<Categories />} />
