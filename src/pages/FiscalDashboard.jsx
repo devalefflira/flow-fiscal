@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { 
-  ChevronLeft, BarChart2, PieChart as PieIcon, Calendar, 
+  ChevronLeft, BarChart2, Calendar, 
   FileCheck, AlertTriangle, CheckCircle, Clock, AlertCircle, UploadCloud
 } from 'lucide-react';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
 
 const COLORS = ['#06b6d4', '#3b82f6', '#10b981', '#f59e0b', '#ef4444'];
 
@@ -21,7 +21,7 @@ export default function FiscalDashboard() {
   // Dados
   const [closingStats, setClosingStats] = useState({
       total: 0, pending: 0, importing: 0, analysis: 0, done: 0,
-      autoImport: 0, manualImport: 0, errorsList: [] // Novos dados
+      autoImport: 0, manualImport: 0, errorsList: [] 
   });
   const [regimeChart, setRegimeChart] = useState([]);
 
@@ -30,25 +30,44 @@ export default function FiscalDashboard() {
     setLoading(true);
     try {
         // 1. DADOS DE FECHAMENTO
-        const { data: closings } = await supabase
+        // Busca exata pela competência (YYYY-MM-01)
+        const { data: closings, error } = await supabase
             .from('fiscal_closings')
             .select(`*, clients(razao_social, regime)`)
             .eq('competence', `${selectedCompetence}-01`);
         
+        if (error) throw error;
+        
         if (closings) {
+            // DEBUG: Verifique no console do navegador o que está vindo
+            console.log("Dados recebidos do banco:", closings);
+            
             // Contagem de Status
             const stats = {
                 total: closings.length,
+                
+                // Pendente (status 'pending')
                 pending: closings.filter(c => c.status === 'pending').length,
-                importing: closings.filter(c => c.status === 'importing').length,
-                analysis: closings.filter(c => c.status === 'analysis').length,
+                
+                // Importação (status 'docs_received')
+                importing: closings.filter(c => c.status === 'docs_received').length,
+                
+                // Em Apuração (status 'analysis' OU 'taxes_generated')
+                analysis: closings.filter(c => c.status === 'analysis' || c.status === 'taxes_generated').length,
+                
+                // Concluídos (status 'done')
                 done: closings.filter(c => c.status === 'done').length,
-                // Novos Contadores
+                
+                // Qualidade da Importação
                 autoImport: closings.filter(c => c.import_type === 'automatic').length,
                 manualImport: closings.filter(c => c.import_type === 'manual').length,
+                
                 // Lista de Erros
                 errorsList: closings.filter(c => c.import_type === 'manual')
             };
+            
+            console.log("Estatísticas calculadas:", stats); // DEBUG
+            
             setClosingStats(stats);
 
             // Gráfico por Regime
@@ -61,7 +80,7 @@ export default function FiscalDashboard() {
         }
 
     } catch (error) {
-        console.error(error);
+        console.error("Erro ao buscar dados do dashboard:", error);
     } finally {
         setLoading(false);
     }

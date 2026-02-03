@@ -39,7 +39,7 @@ export default function FiscalClosing() {
 
   // Novo estado para o erro da importação manual
   const [importError, setImportError] = useState('');
-  const [showManualInput, setShowManualInput] = useState(false); // Controla a exibição do input
+  const [showManualInput, setShowManualInput] = useState(false);
 
   // Opções de Erro (Padronização)
   const errorOptions = [
@@ -101,37 +101,32 @@ export default function FiscalClosing() {
     if (currentIndex === -1) return;
 
     let nextIndex;
-    // LÓGICA PADRÃO: Next (+) | Prev (-)
     if (direction === 'next') nextIndex = currentIndex + 1;
     else nextIndex = currentIndex - 1;
 
     if (nextIndex < 0 || nextIndex >= columnOrder.length) return;
     const nextStatus = columnOrder[nextIndex];
 
-    setActiveTask(task); // Define a tarefa ativa para os modais usarem
+    setActiveTask(task);
 
     // >>> GATILHOS DE AVANÇO (DIREITA) <<<
     if (direction === 'next') {
-      // Pendente -> Importação (Início Automático sem modal)
       if (task.status === 'pending' && nextStatus === 'docs_received') {
         const startedAt = new Date().toISOString();
         await executeUpdate(task, nextStatus, { started_at: startedAt });
         return;
       }
-      // Importação -> Apuração
       if (task.status === 'docs_received' && nextStatus === 'analysis') {
-        setImportError(''); // Reseta erro anterior
-        setShowManualInput(false); // Reseta visualização manual
+        setImportError('');
+        setShowManualInput(false);
         setModalImportOpen(true);
         return;
       }
-      // Apuração -> Guias
       if (task.status === 'analysis' && nextStatus === 'taxes_generated') {
         setApurationData({ entradas: false, saidas: false });
         setModalApurationOpen(true);
         return;
       }
-      // Guias -> Fechamento
       if (task.status === 'taxes_generated' && nextStatus === 'done') {
         setModalClosingOpen(true);
         return;
@@ -140,34 +135,29 @@ export default function FiscalClosing() {
 
     // >>> GATILHOS DE RETORNO (ESQUERDA) <<<
     if (direction === 'prev') {
-      // Fechamento -> Guias (Cancelar)
       if (task.status === 'done' && nextStatus === 'taxes_generated') {
         setModalReverseClosingOpen(true);
         return;
       }
-      // Guias -> Apuração (Reapurar)
       if (task.status === 'taxes_generated' && nextStatus === 'analysis') {
         setModalReverseGuidesOpen(true);
         return;
       }
-      // Apuração -> Importação (Refazer Conferência)
       if (task.status === 'analysis' && nextStatus === 'docs_received') {
         setModalReverseAnalysisOpen(true);
         return;
       }
-      // Importação -> Pendente (Pausar)
       if (task.status === 'docs_received' && nextStatus === 'pending') {
         setModalReverseImportOpen(true);
         return;
       }
     }
 
-    // Movimento simples (caso não caia em nenhum gatilho especial)
     await executeUpdate(task, nextStatus);
   };
 
   const executeUpdate = async (task, newStatus, extraFields = {}) => {
-    // Atualização Otimista
+    // 1. Atualização Visual Otimista (Muda na tela instantaneamente)
     const prevStatus = task.status;
     const updatedTask = { ...task, status: newStatus, ...extraFields };
 
@@ -180,24 +170,29 @@ export default function FiscalClosing() {
       [newStatus]: { ...prev[newStatus], items: destItems }
     }));
 
-    setSelectedCardId(null); // Fecha seleção
-    setActiveTask(null);     // Limpa tarefa ativa
+    setSelectedCardId(null);
+    setActiveTask(null);
 
-    // Persistência
+    // 2. Persistência no Banco (Correção Crítica Aqui)
     try {
-      await supabase
+      const { error } = await supabase
         .from('fiscal_closings')
         .update({ status: newStatus, ...extraFields })
         .eq('id', task.id);
+
+      if (error) throw error; // <--- AGORA O ERRO É LANÇADO SE EXISTIR
+      
+      console.log("Salvo com sucesso no banco:", newStatus);
+
     } catch (error) {
-      console.error("Erro ao salvar:", error);
-      fetchData(); // Reverte se der erro
+      console.error("Erro CRÍTICO ao salvar:", error);
+      alert(`Erro ao salvar alteração: ${error.message || error.details || 'Verifique o console'}`);
+      fetchData(); // Reverte visualmente se der erro
     }
   };
 
   // --- HANDLERS (CONFIRMAÇÕES) ---
 
-  // Avançar
   const confirmImport = (type) => { 
     if (type === 'Manual' && !importError) {
         alert("Por favor, selecione o erro ocorrido.");
@@ -205,8 +200,6 @@ export default function FiscalClosing() {
     }
 
     const newData = { ...(activeTask.movement_data || {}), import_type: type };
-    
-    // Se for manual, salva o erro. Se for auto, limpa o erro (null)
     const extraData = { 
         movement_data: newData,
         import_type: type === 'Automática' ? 'automatic' : 'manual',
@@ -224,42 +217,35 @@ export default function FiscalClosing() {
   };
 
   const confirmClosing = () => {
+    // Garante que o status 'done' e a data sejam enviados
     executeUpdate(activeTask, 'done', { completed_at: new Date().toISOString() });
     setModalClosingOpen(false);
   };
 
-  // Retornar (Reverse)
   const confirmReverseClosing = () => {
-    // Apaga data fim
     executeUpdate(activeTask, 'taxes_generated', { completed_at: null });
     setModalReverseClosingOpen(false);
   };
 
   const confirmReverseGuides = () => {
-    // Remove flags de apuração
     const currentData = activeTask.movement_data || {};
     const newData = { ...currentData };
     delete newData.entradas;
     delete newData.saidas;
-    
     executeUpdate(activeTask, 'analysis', { movement_data: newData });
     setModalReverseGuidesOpen(false);
   };
 
   const confirmReverseAnalysis = () => {
-    // Apaga data início
     executeUpdate(activeTask, 'docs_received', { started_at: null });
     setModalReverseAnalysisOpen(false);
   };
 
   const confirmReverseImport = () => {
-    // Apenas volta
     executeUpdate(activeTask, 'pending');
     setModalReverseImportOpen(false);
   };
 
-
-  // Sincronização Inicial
   const handleSyncClients = async () => {
     setLoading(true);
     try {
@@ -427,7 +413,6 @@ export default function FiscalClosing() {
               <Server className="w-5 h-5 text-blue-400" /> Como foi importado?
             </h2>
             
-            {/* Opções Iniciais */}
             {!showManualInput && (
                 <div className="space-y-3">
                   <button onClick={() => confirmImport('Automática')} className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-xl text-left border border-white/10">
@@ -439,7 +424,6 @@ export default function FiscalClosing() {
                 </div>
             )}
 
-            {/* Input para Manual */}
             {showManualInput && (
                 <div className="space-y-4 animate-fade-in">
                     <div>
