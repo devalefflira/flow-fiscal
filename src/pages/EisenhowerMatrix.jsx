@@ -119,9 +119,13 @@ export default function EisenhowerMatrix() {
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [checklistInput, setChecklistInput] = useState('');
+  
+  // Estado para controlar o filtro de categoria no modal (Não salva no banco, só visual)
+  const [selectedTaskCategory, setSelectedTaskCategory] = useState('');
+
   const [newTask, setNewTask] = useState({ 
       title: '', 
-      category_id: '', 
+      category_id: '', // IDs
       client_id: '',
       origin_id: '', // Origem
       priority: 'Media', // Padrão visual
@@ -233,7 +237,6 @@ export default function EisenhowerMatrix() {
         status: 'todo',
         is_waiting_list: finalWaiting,
         list_position: position,
-        // Campos extras visuais (se tiver colunas no banco, senão são ignorados pelo Supabase se não existirem, verifique seu schema)
         description: newTask.description
     }]);
 
@@ -245,6 +248,7 @@ export default function EisenhowerMatrix() {
             priority: 'Media', quadrant: 'not_urgent_important', 
             deadline: '', description: '', checklist: [], is_waiting_list: false 
         });
+        setSelectedTaskCategory(''); // Reset filtro visual
         setChecklistInput('');
     }
   };
@@ -470,7 +474,7 @@ export default function EisenhowerMatrix() {
               <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
                   {recentTasks.map(task => (
                       <div key={task.id} className="bg-black/20 p-2 rounded border border-white/5 opacity-60 hover:opacity-100 transition-opacity">
-                          <h4 className="text-gray-400 font-medium text-xs">{task.title}</h4> {/* LINHA ALTERADA AQUI */}
+                          <h4 className="text-gray-400 font-medium text-xs">{task.title}</h4>
                           <div className="flex justify-between items-center mt-1 text-[9px] text-gray-600">
                               <span>{task.clients?.razao_social?.slice(0, 15) || '-'}</span>
                               <span>{task.completed_at ? format(new Date(task.completed_at), 'HH:mm') : '-'}</span>
@@ -493,28 +497,41 @@ export default function EisenhowerMatrix() {
                   
                   <form onSubmit={handleCreateTask} className="space-y-4">
                       
-                      {/* LINHA 1: Categoria e Título Padrão */}
+                      {/* LINHA 1: Categoria e Título Padrão (AGRUPADO) */}
                       <div className="grid grid-cols-2 gap-4">
                           <div>
                               <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Categoria da Tarefa</label>
                               <select 
                                   className="w-full bg-black/20 border border-white/10 rounded-lg p-3 text-white text-sm outline-none"
-                                  value={newTask.category_id}
-                                  onChange={e => setNewTask({...newTask, category_id: e.target.value})}
+                                  value={selectedTaskCategory}
+                                  onChange={e => {
+                                      setSelectedTaskCategory(e.target.value);
+                                      setNewTask(prev => ({...prev, title: ''})); // Limpa título se mudar categoria
+                                  }}
                               >
                                   <option value="">Selecione...</option>
-                                  {taskCategories.map(c => <option key={c.id} value={c.id} className="bg-surface">{c.categoria_task}</option>)}
+                                  {/* Map UNIQUE categories */}
+                                  {[...new Set(taskCategories.map(c => c.categoria_task))].map(cat => (
+                                      <option key={cat} value={cat} className="bg-surface">{cat}</option>
+                                  ))}
                               </select>
                           </div>
                           <div>
                               <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Título (Padrão)</label>
                               <select 
-                                  className="w-full bg-black/20 border border-white/10 rounded-lg p-3 text-white text-sm outline-none"
+                                  className="w-full bg-black/20 border border-white/10 rounded-lg p-3 text-white text-sm outline-none disabled:opacity-50"
                                   value={newTask.title}
                                   onChange={e => setNewTask({...newTask, title: e.target.value})}
+                                  disabled={!selectedTaskCategory}
                               >
                                   <option value="">Selecione o Título...</option>
-                                  {taskCategories.map(c => <option key={c.id} value={c.subcategoria_task} className="bg-surface">{c.subcategoria_task}</option>)}
+                                  {/* Filter titles based on selected category */}
+                                  {taskCategories
+                                      .filter(c => c.categoria_task === selectedTaskCategory)
+                                      .map(c => (
+                                          <option key={c.id} value={c.subcategoria_task} className="bg-surface">{c.subcategoria_task}</option>
+                                      ))
+                                  }
                               </select>
                           </div>
                       </div>
