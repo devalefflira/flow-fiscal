@@ -1,242 +1,274 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { supabase } from '../supabaseClient';
 import { 
-  RefreshCw, 
-  CheckSquare, 
-  Infinity as InfinityIcon, 
-  LayoutGrid, 
-  Folder, 
-  LogOut,
-  ChevronDown // Adicionado para indicar expansão
+  LayoutDashboard, CheckSquare, Infinity as InfinityIcon, 
+  FileText, Users, Settings, LogOut, ChevronRight, 
+  Bell, Search, Menu, X, ArrowUpRight, Activity, Calendar
 } from 'lucide-react';
 
 export default function Home() {
   const navigate = useNavigate();
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [activeCategory, setActiveCategory] = useState(null); // Controla qual menu está expandido
-  
-  // Estados para o efeito de digitação
-  const [displayedText, setDisplayedText] = useState('');
-  const fullText = "O que vamos fazer agora?"; 
-  
-  const toggleMenu = () => {
-    const newState = !isMenuOpen;
-    setIsMenuOpen(newState);
-    if (!newState) setActiveCategory(null); // Fecha submenus se o menu principal fechar
+  const location = useLocation();
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [user, setUser] = useState({ name: 'Usuário', email: '' });
+  const [currentDate, setCurrentDate] = useState(new Date());
+
+  // --- EFEITO DE SAUDAÇÃO E DATA ---
+  useEffect(() => {
+    // Pega usuário do Supabase
+    const getUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        setUser({ 
+            email: user.email,
+            // Tenta pegar nome do metadata ou usa parte do email
+            name: user.user_metadata?.full_name || user.email.split('@')[0] 
+        });
+      }
+    };
+    getUser();
+
+    // Timer do relógio
+    const timer = setInterval(() => setCurrentDate(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    navigate('/login');
   };
 
-  // Efeito de Máquina de Escrever
-  useEffect(() => {
-    if (!isMenuOpen) {
-      setDisplayedText('');
-      let index = 0;
-      const typingInterval = setInterval(() => {
-        if (index < fullText.length) {
-          setDisplayedText((prev) => fullText.slice(0, index + 1));
-          index++;
-        } else {
-          clearInterval(typingInterval);
-        }
-      }, 50);
-      return () => clearInterval(typingInterval);
+  // --- ESTRUTURA DE NAVEGAÇÃO ---
+  const menuItems = [
+    { 
+      category: 'Principal',
+      items: [
+        { label: 'Visão Geral', icon: LayoutDashboard, path: '/home', active: true },
+        { label: 'Dashboard Tarefas', icon: Activity, path: '/dashboard/tarefas' },
+        { label: 'Dashboard Fiscal', icon: Activity, path: '/dashboard/fiscal' },
+      ]
+    },
+    {
+      category: 'Operacional',
+      items: [
+        { label: 'Minhas Tarefas', icon: CheckSquare, path: '/tarefas/matriz' },
+        { label: 'Fechamento Fiscal', icon: InfinityIcon, path: '/processos/fechamento' },
+        { label: 'Obrigações', icon: FileText, path: '/processos/obrigacoes' },
+        { label: 'Parcelamentos', icon: FileText, path: '/processos/parcelamentos' },
+      ]
+    },
+    {
+      category: 'Gestão',
+      items: [
+        { label: 'Relatórios', icon: FileText, path: '/processos/relatorios' },
+        { label: 'Clientes', icon: Users, path: '/cadastros/clientes' },
+        { label: 'Configurações', icon: Settings, path: '/cadastros/categorias-tarefas' },
+      ]
     }
-  }, [isMenuOpen]);
+  ];
 
-  // Componente de Item do Menu
-  const MenuItem = ({ icon: Icon, title, items, side, vertical, delayClass }) => {
-    const isLeft = side === 'left';
-    const isTop = vertical === 'top';
-    
-    // Identifica se este menu específico está aberto
-    const isOpen = activeCategory === title;
-
-    // Função para alternar este menu
-    const handleToggle = (e) => {
-      e.stopPropagation();
-      // Se já estiver aberto, fecha (null). Se não, abre este (title).
-      setActiveCategory(isOpen ? null : title);
-    };
-
-    // Estilização de Posição
-    const containerAlignment = isLeft ? 'items-start' : 'items-end';
-    const textAlign = isLeft ? 'text-left' : 'text-right';
-    const headerDirection = isLeft ? 'flex-row' : 'flex-row-reverse';
-    const borderSide = isLeft ? 'border-l-2 pl-3' : 'border-r-2 pr-3';
-    
-    // Transições de entrada do Menu Principal
-    const translateX = isLeft ? '-translate-x-[16rem]' : 'translate-x-[16rem]';
-    const translateY = isTop ? '-translate-y-[9rem]' : 'translate-y-[9rem]';
-
-    return (
-      <div 
-        className={`absolute top-1/2 left-1/2 z-20 w-64
-          transition-all duration-700 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${delayClass}
-          ${isMenuOpen 
-            ? `opacity-100 scale-100 ${translateX} ${translateY}` 
-            : 'opacity-0 scale-0 -translate-x-1/2 -translate-y-1/2 pointer-events-none'
-          }
+  return (
+    <div className="flex h-screen bg-[#0f172a] text-white font-sans overflow-hidden">
+      
+      {/* --- SIDEBAR --- */}
+      <aside 
+        className={`
+          ${sidebarOpen ? 'w-64' : 'w-20'} 
+          bg-surface/50 backdrop-blur-xl border-r border-white/5 flex flex-col transition-all duration-300 relative z-20
         `}
-        style={{ marginTop: '-2rem', marginLeft: '-8rem' }}
       >
-        <div className={`flex flex-col group cursor-default ${containerAlignment}`}>
+        {/* Logo Area */}
+        <div className="h-20 flex items-center justify-center border-b border-white/5">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-brand-cyan rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(8,145,178,0.5)]">
+              <InfinityIcon className="w-5 h-5 text-white" />
+            </div>
+            {sidebarOpen && <span className="font-bold text-lg tracking-wide animate-fade-in">FlowFiscal</span>}
+          </div>
+        </div>
+
+        {/* Menu Items */}
+        <div className="flex-1 overflow-y-auto py-6 space-y-8 custom-scrollbar">
+          {menuItems.map((section, idx) => (
+            <div key={idx} className="px-4">
+              {sidebarOpen && (
+                <h3 className="text-xs font-bold text-gray-500 uppercase mb-3 px-2 animate-fade-in">
+                  {section.category}
+                </h3>
+              )}
+              <div className="space-y-1">
+                {section.items.map((item, itemIdx) => (
+                  <button
+                    key={itemIdx}
+                    onClick={() => navigate(item.path)}
+                    className={`
+                      w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group
+                      ${location.pathname === item.path 
+                        ? 'bg-brand-cyan text-white shadow-lg shadow-cyan-900/20' 
+                        : 'text-gray-400 hover:bg-white/5 hover:text-white'}
+                    `}
+                    title={!sidebarOpen ? item.label : ''}
+                  >
+                    <item.icon className={`w-5 h-5 ${location.pathname === item.path ? 'text-white' : 'text-gray-400 group-hover:text-brand-cyan transition-colors'}`} />
+                    {sidebarOpen && <span className="text-sm font-medium">{item.label}</span>}
+                    {sidebarOpen && location.pathname === item.path && <ChevronRight className="w-4 h-4 ml-auto opacity-50" />}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* User / Logout */}
+        <div className="p-4 border-t border-white/5 bg-black/10">
+          <div className={`flex items-center gap-3 ${!sidebarOpen && 'justify-center'}`}>
+            <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-brand-cyan to-purple-600 flex items-center justify-center text-sm font-bold shadow-lg">
+              {user.name.charAt(0).toUpperCase()}
+            </div>
+            {sidebarOpen && (
+              <div className="flex-1 overflow-hidden">
+                <p className="text-sm font-bold truncate">{user.name}</p>
+                <p className="text-xs text-gray-500 truncate">{user.email}</p>
+              </div>
+            )}
+            <button 
+              onClick={handleLogout}
+              className="text-gray-400 hover:text-red-400 transition-colors p-1" 
+              title="Sair"
+            >
+              <LogOut className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* --- MAIN CONTENT --- */}
+      <main className="flex-1 flex flex-col h-full relative overflow-hidden">
+        {/* Background Decorativo */}
+        <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-brand-cyan/10 via-background to-background pointer-events-none z-0"></div>
+
+        {/* Header Superior */}
+        <header className="h-20 px-8 flex items-center justify-between z-10">
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="p-2 rounded-lg text-gray-400 hover:bg-white/5 hover:text-white transition-colors"
+            >
+              {sidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+            </button>
+            <div className="hidden md:flex flex-col">
+              <h2 className="text-xl font-bold text-white">Olá, {user.name} 👋</h2>
+              <p className="text-xs text-gray-400">
+                {currentDate.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <div className="relative hidden md:block">
+              <Search className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input 
+                type="text" 
+                placeholder="Buscar cliente ou tarefa..." 
+                className="bg-surface border border-white/10 rounded-full pl-10 pr-4 py-2 text-sm text-white focus:border-brand-cyan outline-none w-64 transition-all"
+              />
+            </div>
+            <button className="relative p-2 rounded-full hover:bg-white/5 transition-colors">
+              <Bell className="w-5 h-5 text-gray-300" />
+              <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+            </button>
+          </div>
+        </header>
+
+        {/* Conteúdo Scrollável */}
+        <div className="flex-1 overflow-y-auto p-8 z-10 custom-scrollbar">
           
-          {/* --- TÍTULO/ÍCONE (Botão de Expandir) --- */}
-          <button 
-            onClick={handleToggle}
-            className={`flex items-center gap-3 mb-2 ${headerDirection} group/btn outline-none`}
-          >
-            {/* Ícone Principal com Animação */}
-            <div className={`
-                transition-all duration-500 ease-in-out
-                ${isOpen ? 'rotate-12 scale-110 text-brand-cyan drop-shadow-[0_0_8px_rgba(8,145,178,0.5)]' : 'text-gray-100 rotate-0 scale-100'}
-            `}>
-                <Icon className="w-7 h-7" />
+          {/* Métricas Rápidas (Mockup) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+            {[
+              { label: 'Tarefas Pendentes', val: '12', sub: '3 urgentes', icon: CheckSquare, color: 'text-yellow-400', bg: 'bg-yellow-400/10' },
+              { label: 'Fechamentos', val: '85%', sub: '15 empresas restantes', icon: InfinityIcon, color: 'text-brand-cyan', bg: 'bg-brand-cyan/10' },
+              { label: 'Obrigações', val: '5', sub: 'Vencem hoje', icon: FileText, color: 'text-red-400', bg: 'bg-red-400/10' },
+              { label: 'Novos Clientes', val: '2', sub: 'Neste mês', icon: Users, color: 'text-emerald-400', bg: 'bg-emerald-400/10' },
+            ].map((stat, i) => (
+              <div key={i} className="bg-surface border border-white/5 p-6 rounded-2xl hover:border-white/10 transition-all group cursor-default">
+                <div className="flex justify-between items-start mb-4">
+                  <div className={`p-3 rounded-xl ${stat.bg} ${stat.color}`}>
+                    <stat.icon className="w-6 h-6" />
+                  </div>
+                  <span className="text-xs font-bold text-gray-500 bg-black/20 px-2 py-1 rounded-full group-hover:bg-white/10 transition-colors">Hoje</span>
+                </div>
+                <h3 className="text-2xl font-bold text-white mb-1">{stat.val}</h3>
+                <p className="text-sm text-gray-400">{stat.label}</p>
+                <p className="text-xs text-gray-600 mt-2">{stat.sub}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Cards de Acesso Rápido */}
+          <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
+            <ArrowUpRight className="w-5 h-5 text-brand-cyan" /> Acesso Rápido
+          </h3>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Card 1: Tarefas */}
+            <div 
+              onClick={() => navigate('/tarefas/matriz')}
+              className="bg-gradient-to-br from-surface to-surface/50 border border-white/10 p-6 rounded-2xl cursor-pointer hover:border-brand-cyan/50 hover:shadow-lg hover:shadow-cyan-900/10 transition-all group relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-brand-cyan/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 group-hover:bg-brand-cyan/10 transition-colors"></div>
+              <div className="relative z-10">
+                <div className="w-12 h-12 bg-black/30 rounded-xl flex items-center justify-center mb-4 border border-white/5">
+                  <CheckSquare className="w-6 h-6 text-brand-cyan" />
+                </div>
+                <h4 className="text-lg font-bold text-white mb-2">Matriz de Tarefas</h4>
+                <p className="text-sm text-gray-400 mb-4">Gerencie suas prioridades diárias usando a metodologia Eisenhower.</p>
+                <span className="text-xs font-bold text-brand-cyan flex items-center gap-1 group-hover:gap-2 transition-all">
+                  Acessar agora <ChevronRight className="w-3 h-3" />
+                </span>
+              </div>
             </div>
 
-            <div className={`flex items-center gap-2 ${headerDirection}`}>
-                <h2 className={`
-                    text-xl font-bold uppercase tracking-wide drop-shadow-md transition-colors duration-300
-                    ${isOpen ? 'text-brand-cyan' : 'text-white group-hover/btn:text-brand-cyan'}
-                `}>
-                {title}
-                </h2>
-                
-                {/* Seta indicativa (Pequena animação extra) */}
-                <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform duration-500 ${isOpen ? 'rotate-180 text-brand-cyan' : 'rotate-0'}`} />
+            {/* Card 2: Fechamento */}
+            <div 
+              onClick={() => navigate('/processos/fechamento')}
+              className="bg-gradient-to-br from-surface to-surface/50 border border-white/10 p-6 rounded-2xl cursor-pointer hover:border-purple-500/50 hover:shadow-lg hover:shadow-purple-900/10 transition-all group relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 group-hover:bg-purple-500/10 transition-colors"></div>
+              <div className="relative z-10">
+                <div className="w-12 h-12 bg-black/30 rounded-xl flex items-center justify-center mb-4 border border-white/5">
+                  <InfinityIcon className="w-6 h-6 text-purple-400" />
+                </div>
+                <h4 className="text-lg font-bold text-white mb-2">Fechamento Fiscal</h4>
+                <p className="text-sm text-gray-400 mb-4">Pipeline completo de apuração mensal de impostos dos clientes.</p>
+                <span className="text-xs font-bold text-purple-400 flex items-center gap-1 group-hover:gap-2 transition-all">
+                  Iniciar processo <ChevronRight className="w-3 h-3" />
+                </span>
+              </div>
             </div>
-          </button>
-          
-          {/* --- SUBMENUS (Lista com Animação de Altura) --- */}
-          <div 
-            className={`
-                grid transition-all duration-500 ease-in-out w-full
-                ${isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}
-            `}
-          >
-            <div className="overflow-hidden">
-                <ul className={`space-y-2 py-2 ${textAlign} ${borderSide} border-white/30`}>
-                    {items.map((item, idx) => (
-                    <li 
-                        key={idx} 
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            if (item.path) navigate(item.path);
-                        }}
-                        className="
-                            text-gray-400 text-sm font-medium drop-shadow-sm cursor-pointer 
-                            hover:text-white hover:translate-x-1 transition-all duration-200 block
-                        "
-                    >
-                        {item.label}
-                    </li>
-                    ))}
-                </ul>
+
+            {/* Card 3: Relatórios */}
+            <div 
+              onClick={() => navigate('/processos/relatorios')}
+              className="bg-gradient-to-br from-surface to-surface/50 border border-white/10 p-6 rounded-2xl cursor-pointer hover:border-emerald-500/50 hover:shadow-lg hover:shadow-emerald-900/10 transition-all group relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 group-hover:bg-emerald-500/10 transition-colors"></div>
+              <div className="relative z-10">
+                <div className="w-12 h-12 bg-black/30 rounded-xl flex items-center justify-center mb-4 border border-white/5">
+                  <FileText className="w-6 h-6 text-emerald-400" />
+                </div>
+                <h4 className="text-lg font-bold text-white mb-2">Relatórios Gerenciais</h4>
+                <p className="text-sm text-gray-400 mb-4">Exporte PDFs diários de produtividade e status de fechamento.</p>
+                <span className="text-xs font-bold text-emerald-400 flex items-center gap-1 group-hover:gap-2 transition-all">
+                  Gerar relatório <ChevronRight className="w-3 h-3" />
+                </span>
+              </div>
             </div>
           </div>
 
         </div>
-      </div>
-    );
-  };
-
-  return (
-    <div className="min-h-screen bg-background relative overflow-hidden flex items-center justify-center">
-      
-      {/* --- VÍDEO DE BACKGROUND --- */}
-      <div className="absolute inset-0 z-0">
-        <video
-          autoPlay
-          loop
-          muted
-          playsInline
-          className="w-full h-full object-cover opacity-60"
-        >
-          <source src="/water-flow.mp4" type="video/mp4" />
-        </video>
-        <div className="absolute inset-0 bg-background/80 backdrop-blur-[2px]"></div>
-      </div>
-
-      {/* Botão Central + Texto */}
-      <div className="relative z-50 flex flex-col items-center justify-center">
-        <button 
-          onClick={toggleMenu}
-          className={`
-            bg-brand-cyan w-20 h-20 rounded-full flex items-center justify-center shadow-[0_0_50px_rgba(8,145,178,0.6)]
-            transition-all duration-700 ease-in-out hover:scale-110 active:scale-95 z-50 relative border-2 border-white/10
-            ${isMenuOpen ? 'rotate-180' : 'animate-breathing'}
-          `}
-        >
-          <RefreshCw className="w-10 h-10 text-white" strokeWidth={2.5} />
-        </button>
-        
-        <div className={`absolute top-24 transition-all duration-500 w-[400px] flex justify-center pointer-events-none
-            ${isMenuOpen ? 'opacity-0 translate-y-4 scale-90' : 'opacity-100 translate-y-0 scale-100'}
-        `}>
-          <p className="text-lg text-white font-medium text-center h-8 flex items-center justify-center drop-shadow-md tracking-wide">
-            {displayedText}
-            {!isMenuOpen && displayedText.length < fullText.length && (
-              <span className="animate-pulse border-r-2 border-brand-cyan ml-1 h-5 inline-block"></span>
-            )}
-          </p>
-        </div>
-      </div>
-
-      {/* --- ITENS DO MENU --- */}
-
-      {/* 1. TAREFAS */}
-      <MenuItem 
-        side="left" vertical="top" icon={CheckSquare} title="Tarefas"
-        items={[
-          { label: 'Matriz de Eisenhower', path: '/tarefas/matriz' },
-          { label: 'Kanban / Dashboard', path: '/dashboard/tarefas' } // Adicionei um link útil aqui
-        ]}
-        delayClass="delay-0"
-      />
-
-      {/* 2. PROCESSOS */}
-      <MenuItem 
-        side="right" vertical="top" icon={InfinityIcon} title="Processos"
-        items={[
-          { label: 'Fechamento Fiscal', path: '/processos/fechamento' },
-          { label: 'Obrigações Acessórias', path: '/processos/obrigacoes' },
-          { label: 'Controle de Parcelamentos', path: '/processos/parcelamentos' },
-          { label: 'Relatórios', path: '/processos/relatorios' }
-        ]}
-        delayClass="delay-[50ms]"
-      />
-
-      {/* 3. DASHBOARD */}
-      <MenuItem 
-        side="left" vertical="bottom" icon={LayoutGrid} title="Dashboard"
-        items={[
-          { label: 'Visão Tarefa/Foco', path: '/dashboard/tarefas' },
-          { label: 'Visão Fiscal', path: '/dashboard/fiscal' }
-        ]}
-        delayClass="delay-[100ms]"
-      />
-
-      {/* 4. CADASTROS */}
-      <MenuItem 
-        side="right" vertical="bottom" icon={Folder} title="Cadastros"
-        items={[
-          { label: 'Categorias de Tarefas', path: '/cadastros/categorias-tarefas' },
-          { label: 'Origem', path: '/cadastros/categorias' },
-          { label: 'Clientes', path: '/cadastros/clientes' },
-          { label: 'Guias de Tributos', path: '/cadastros/guias' },
-          { label: 'Equipe', path: '/cadastros/usuarios' },
-          { label: 'Tipos de Obrigações', path: '/cadastros/obrigacoes' }
-        ]}
-        delayClass="delay-[150ms]"
-      />
-
-      <button 
-        onClick={() => navigate('/login')}
-        className="absolute bottom-8 right-8 text-gray-400 hover:text-red-500 transition-colors flex items-center gap-2 z-50 group font-medium"
-      >
-        <span className="text-sm group-hover:underline">Sair</span>
-        <LogOut className="w-5 h-5" />
-      </button>
-
+      </main>
     </div>
   );
 }
