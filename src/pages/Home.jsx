@@ -4,7 +4,8 @@ import { supabase } from '../supabaseClient';
 import { 
   LayoutDashboard, CheckSquare, Infinity as InfinityIcon, 
   FileText, Users, Settings, LogOut, ChevronRight, 
-  Bell, Search, Menu, X, ArrowUpRight, Activity, Calendar
+  Bell, Search, Menu, X, ArrowUpRight, Activity, Calendar,
+  Layers, CreditCard, FileCheck // Novos ícones para os cadastros
 } from 'lucide-react';
 
 export default function Home() {
@@ -39,7 +40,7 @@ export default function Home() {
     navigate('/login');
   };
 
-  // --- ESTRUTURA DE NAVEGAÇÃO ---
+  // --- ESTRUTURA DE NAVEGAÇÃO COMPLETA ---
   const menuItems = [
     { 
       category: 'Principal',
@@ -54,16 +55,20 @@ export default function Home() {
       items: [
         { label: 'Minhas Tarefas', icon: CheckSquare, path: '/tarefas/matriz' },
         { label: 'Fechamento Fiscal', icon: InfinityIcon, path: '/processos/fechamento' },
-        { label: 'Obrigações', icon: FileText, path: '/processos/obrigacoes' },
-        { label: 'Parcelamentos', icon: FileText, path: '/processos/parcelamentos' },
+        { label: 'Obrigações', icon: FileCheck, path: '/processos/obrigacoes' },
+        { label: 'Parcelamentos', icon: CreditCard, path: '/processos/parcelamentos' },
+        { label: 'Relatórios', icon: FileText, path: '/processos/relatorios' },
       ]
     },
     {
-      category: 'Gestão',
+      category: 'Cadastros',
       items: [
-        { label: 'Relatórios', icon: FileText, path: '/processos/relatorios' },
         { label: 'Clientes', icon: Users, path: '/cadastros/clientes' },
-        { label: 'Configurações', icon: Settings, path: '/cadastros/categorias-tarefas' },
+        { label: 'Equipe', icon: Users, path: '/cadastros/usuarios' },
+        { label: 'Origens', icon: Layers, path: '/cadastros/categorias' },
+        { label: 'Guias de Tributos', icon: FileText, path: '/cadastros/guias' },
+        { label: 'Tipos de Obrigações', icon: FileCheck, path: '/cadastros/obrigacoes' },
+        { label: 'Categorias de Tarefas', icon: Settings, path: '/cadastros/categorias-tarefas' },
       ]
     }
   ];
