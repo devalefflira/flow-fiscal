@@ -1,63 +1,182 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import { useNavigate } from 'react-router-dom';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
+import { 
+  Trash2, Plus, Play, Pause, CheckCircle, 
+  ChevronLeft, ArrowUp, ArrowDown, List, Zap, 
+  ToggleLeft, ToggleRight, Calendar, X, AlignLeft
+} from 'lucide-react';
 import { format, intervalToDuration, formatDuration } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
-import { 
-  ChevronLeft, Plus, CheckCircle, Trash2, Edit2, 
-  Square, CheckSquare, X, Calendar, Building, Tag, Clock,
-  Play, Pause // Novos ícones
-} from 'lucide-react';
+// --- COMPONENTES AUXILIARES ---
+
+const TaskCard = ({ task, index, onDelete, onStatusChange, onTimerToggle, isWaitingList, onMoveUp, onMoveDown, isFirst, isLast }) => {
+  const isRunning = task.status === 'doing' && !task.is_paused;
+  
+  const formatMs = (ms) => {
+    if (ms < 0) ms = 0;
+    const duration = intervalToDuration({ start: 0, end: ms });
+    return formatDuration(duration, { format: ['hours', 'minutes'], locale: ptBR }) || '0min';
+  };
+
+  return (
+    <Draggable draggableId={task.id.toString()} index={index} isDragDisabled={isWaitingList}>
+      {(provided, snapshot) => (
+        <div
+          ref={provided.innerRef}
+          {...provided.draggableProps}
+          {...provided.dragHandleProps}
+          className={`bg-surface p-4 rounded-xl mb-3 border shadow-sm group hover:border-brand-cyan/50 transition-all relative
+            ${snapshot.isDragging ? 'shadow-2xl ring-2 ring-brand-cyan rotate-2' : 'border-white/5'}
+            ${isRunning ? 'border-l-4 border-l-brand-cyan' : ''}
+            ${isWaitingList ? 'border-l-4 border-l-purple-500' : ''}
+          `}
+        >
+          <div className="flex justify-between items-start mb-2">
+             <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider bg-black/20 px-1.5 py-0.5 rounded">
+                {task.categories?.name || 'Geral'}
+             </span>
+             
+             {/* Ações da Lista de Espera */}
+             {isWaitingList && (
+                 <div className="flex gap-1">
+                     <button 
+                        onClick={(e) => { e.stopPropagation(); onMoveUp(task); }}
+                        disabled={isFirst}
+                        className="p-1 rounded hover:bg-white/10 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                     >
+                         <ArrowUp className="w-4 h-4" />
+                     </button>
+                     <button 
+                        onClick={(e) => { e.stopPropagation(); onMoveDown(task); }}
+                        disabled={isLast}
+                        className="p-1 rounded hover:bg-white/10 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                     >
+                         <ArrowDown className="w-4 h-4" />
+                     </button>
+                 </div>
+             )}
+
+             <div className={`flex gap-2 transition-opacity ${isWaitingList ? '' : 'opacity-0 group-hover:opacity-100'}`}>
+                <button 
+                    onClick={(e) => { e.stopPropagation(); onDelete(task.id); }}
+                    className="text-gray-500 hover:text-red-500 transition-colors"
+                >
+                    <Trash2 className="w-4 h-4" />
+                </button>
+             </div>
+          </div>
+
+          <h4 className="text-white font-bold text-sm leading-snug mb-3">{task.title}</h4>
+          
+          <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/5">
+             <div className="flex items-center gap-1 text-gray-400 text-xs truncate max-w-[50%]">
+                <span className="truncate" title={task.clients?.razao_social}>
+                    {task.clients?.razao_social || 'Sem Cliente'}
+                </span>
+             </div>
+
+             {/* Controles apenas se não for Lista de Espera */}
+             {!isWaitingList && (
+                 <div className="flex items-center gap-2">
+                    {task.status !== 'done' && (
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); onTimerToggle(task); }}
+                            className={`p-1.5 rounded-lg transition-all flex items-center gap-1
+                                ${isRunning ? 'bg-yellow-500/10 text-yellow-500' : 'bg-brand-cyan/10 text-brand-cyan'}
+                            `}
+                        >
+                            {isRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                        </button>
+                    )}
+                    <button 
+                        onClick={(e) => { e.stopPropagation(); onStatusChange(task.id, 'done'); }}
+                        className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-all"
+                    >
+                        <CheckCircle className="w-4 h-4" />
+                    </button>
+                 </div>
+             )}
+          </div>
+        </div>
+      )}
+    </Draggable>
+  );
+};
 
 export default function EisenhowerMatrix() {
   const navigate = useNavigate();
-  const [tasks, setTasks] = useState([]);
-  const [clients, setClients] = useState([]);
-  const [categories, setCategories] = useState([]); // Origem
-  const [taskStandards, setTaskStandards] = useState([]); // Padronização
   const [loading, setLoading] = useState(true);
-
-  // Estados do Modal
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  // Data States
+  const [waitingList, setWaitingList] = useState([]);
   const [currentTask, setCurrentTask] = useState(null); 
+  const [otherTasks, setOtherTasks] = useState([]); 
+  const [recentTasks, setRecentTasks] = useState([]); 
+
+  // Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [checklistInput, setChecklistInput] = useState('');
-  const [selectedTaskCategory, setSelectedTaskCategory] = useState('');
+  const [newTask, setNewTask] = useState({ 
+      title: '', 
+      category_id: '', 
+      client_id: '',
+      origin_id: '', // Origem
+      priority: 'Media', // Padrão visual
+      quadrant: 'not_urgent_important', // Default: 2. Agendar
+      deadline: '',
+      description: '',
+      checklist: [], // Array de strings
+      is_waiting_list: false 
+  });
+  
+  // Auxiliares
+  const [categories, setCategories] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [taskCategories, setTaskCategories] = useState([]); // Títulos Padrão
 
-  // Form State Inicial
-  const initialForm = {
-    title: '',
-    description: '',
-    priority: 'Média',
-    quadrant: 2,
-    client_id: '',
-    category_id: '',
-    due_date: '',
-    checklist: []
-  };
-  const [formData, setFormData] = useState(initialForm);
-
-  // --- BUSCAR DADOS ---
+  // --- BUSCA DE DADOS ---
   const fetchData = async () => {
     try {
-      setLoading(true);
-      const { data: tasksData } = await supabase
+      // 1. Tarefas Ativas
+      const { data: allActive, error: activeError } = await supabase
         .from('tasks')
-        .select(`*, clients(id, razao_social), categories(id, name, color)`)
-        .order('created_at', { ascending: false });
-      if (tasksData) setTasks(tasksData);
+        .select(`*, categories(name), clients(razao_social)`)
+        .neq('status', 'done')
+        .order('list_position', { ascending: true });
 
-      const { data: clientsData } = await supabase.from('clients').select('id, razao_social').order('razao_social');
-      if (clientsData) setClients(clientsData);
+      if (activeError) throw activeError;
 
-      const { data: catData } = await supabase.from('categories').select('id, name, color').order('name');
-      if (catData) setCategories(catData);
+      const waiting = allActive.filter(t => t.is_waiting_list);
+      const q1 = allActive.find(t => t.priority === 'urgent_important' && !t.is_waiting_list);
+      const others = allActive.filter(t => t.id !== q1?.id && !t.is_waiting_list);
 
-      const { data: stdData } = await supabase.from('task_categories').select('*').order('categoria_task');
-      if (stdData) setTaskStandards(stdData);
+      setWaitingList(waiting);
+      setCurrentTask(q1 || null);
+      setOtherTasks(others);
+
+      // 2. Tarefas Recentes
+      const { data: recent } = await supabase
+        .from('tasks')
+        .select(`*, categories(name), clients(razao_social)`)
+        .eq('status', 'done')
+        .order('completed_at', { ascending: false })
+        .limit(10);
+      setRecentTasks(recent || []);
+
+      // 3. Cadastros
+      const { data: cats } = await supabase.from('categories').select('*'); // Origem
+      const { data: clis } = await supabase.from('clients').select('id, razao_social');
+      const { data: tCats } = await supabase.from('task_categories').select('*'); // Títulos Padrão
+
+      setCategories(cats || []);
+      setClients(clis || []);
+      setTaskCategories(tCats || []);
 
     } catch (error) {
-      console.error(error);
+      console.error('Erro:', error);
     } finally {
       setLoading(false);
     }
@@ -65,462 +184,464 @@ export default function EisenhowerMatrix() {
 
   useEffect(() => { fetchData(); }, []);
 
-  // --- HELPERS DE DADOS ---
-  const uniqueTaskCategories = [...new Set(taskStandards.map(item => item.categoria_task))];
-  const filteredTitles = taskStandards.filter(item => item.categoria_task === selectedTaskCategory);
+  // --- AÇÕES ---
 
-  // --- AÇÕES DO MODAL ---
-  const openModal = (task = null) => {
-    if (task) {
-      setCurrentTask(task);
-      setFormData({
-        title: task.title,
-        description: task.description || '',
-        priority: task.priority || 'Média',
-        quadrant: task.quadrant || 2,
-        client_id: task.client_id || '',
-        category_id: task.category_id || '',
-        due_date: task.due_date || '',
-        checklist: task.checklist || []
-      });
-      const match = taskStandards.find(s => s.subcategoria_task === task.title);
-      setSelectedTaskCategory(match ? match.categoria_task : '');
-    } else {
-      setCurrentTask(null);
-      setFormData(initialForm);
-      setSelectedTaskCategory('');
-    }
-    setIsModalOpen(true);
-  };
+  const handleDragEnd = async (result) => {
+    const { source, destination, draggableId } = result;
+    if (!destination) return;
+    if (source.droppableId === destination.droppableId && source.index === destination.index) return;
 
-  const handleSave = async () => {
-    if (!formData.title.trim()) return alert('O título é obrigatório');
-
-    const payload = {
-      title: formData.title,
-      description: formData.description,
-      priority: formData.priority,
-      quadrant: parseInt(formData.quadrant),
-      client_id: formData.client_id || null,
-      category_id: formData.category_id || null,
-      due_date: formData.due_date || null,
-      checklist: formData.checklist
-    };
-
-    if (currentTask) {
-      const { error } = await supabase.from('tasks').update(payload).eq('id', currentTask.id);
-      if (error) alert('Erro ao atualizar: ' + error.message);
-    } else {
-      const { error } = await supabase.from('tasks').insert([{ ...payload, status: 'todo' }]);
-      if (error) alert('Erro ao criar: ' + error.message);
+    if (destination.droppableId === 'focus_area') {
+        alert("O quadro 'Fazer Agora' é alimentado automaticamente pela Lista de Espera.");
+        return; 
     }
 
-    setIsModalOpen(false);
-    fetchData();
+    const newPriority = destination.droppableId;
+    setOtherTasks(prev => prev.map(t => t.id.toString() === draggableId ? { ...t, priority: newPriority } : t));
+    await supabase.from('tasks').update({ priority: newPriority }).eq('id', draggableId);
   };
 
-  // --- AÇÕES DO CRONÔMETRO (NOVA LÓGICA) ---
-  
-  const handlePlay = async (task) => {
-    const now = new Date().toISOString();
-    const updates = {};
+  const handleCreateTask = async (e) => {
+    e.preventDefault();
+    if (!newTask.title) return;
 
-    if (!task.started_at) {
-        // Primeiro Início
-        updates.started_at = now;
-        updates.status = 'doing';
-    } else if (task.is_paused && task.last_paused_at) {
-        // Retomando de Pausa (Calcula tempo que ficou pausado)
-        const pauseDuration = new Date(now).getTime() - new Date(task.last_paused_at).getTime();
-        updates.total_pause = (task.total_pause || 0) + pauseDuration;
-        updates.is_paused = false;
-        updates.last_paused_at = null;
+    // Define posição na lista de espera
+    let position = 0;
+    if (newTask.is_waiting_list && waitingList.length > 0) {
+        position = Math.max(...waitingList.map(t => t.list_position || 0)) + 1;
     }
 
-    // Atualização Otimista
-    setTasks(prev => prev.map(t => t.id === task.id ? { ...t, ...updates } : t));
-    await supabase.from('tasks').update(updates).eq('id', task.id);
-  };
+    // Regra do Foco Único
+    let finalPriority = newTask.quadrant; // Pega do dropdown
+    let finalWaiting = newTask.is_waiting_list;
 
-  const handlePause = async (task) => {
-    const now = new Date().toISOString();
-    const updates = {
-        is_paused: true,
-        last_paused_at: now
-    };
+    // Se usuário tentar "Fazer Agora" e já tiver tarefa, vai para Lista de Espera
+    if (finalPriority === 'urgent_important' && !finalWaiting && currentTask) {
+        alert("Já existe uma tarefa em 'Fazer Agora'. Esta tarefa será enviada para a Lista de Espera.");
+        finalWaiting = true;
+        position = waitingList.length > 0 ? Math.max(...waitingList.map(t => t.list_position || 0)) + 1 : 1;
+    }
 
-    setTasks(prev => prev.map(t => t.id === task.id ? { ...t, ...updates } : t));
-    await supabase.from('tasks').update(updates).eq('id', task.id);
-  };
+    // Se estiver na lista de espera, o quadrante técnico no banco é irrelevante, mas mantemos consistência
+    if (finalWaiting) finalPriority = 'waiting_list'; 
 
-  const completeTask = async (task) => {
-    const allChecked = task.checklist ? task.checklist.every(item => item.done) : true;
-    if (!allChecked) return alert("Complete o checklist antes de finalizar!");
+    const { error } = await supabase.from('tasks').insert([{
+        title: newTask.title,
+        priority: finalWaiting ? 'urgent_important' : finalPriority, // Se waitlist, fica "na fila" do urgente
+        category_id: newTask.origin_id || null, // Origem
+        client_id: newTask.client_id || null,
+        status: 'todo',
+        is_waiting_list: finalWaiting,
+        list_position: position,
+        // Campos extras visuais (se tiver colunas no banco, senão são ignorados pelo Supabase se não existirem, verifique seu schema)
+        description: newTask.description
+    }]);
 
-    if (window.confirm('Concluir esta tarefa?')) {
-      const now = new Date().toISOString();
-      const updates = {
-          status: 'done',
-          completed_at: now,
-          is_paused: false 
-      };
-
-      // Se estava pausado ao concluir, adicionamos o tempo final de pausa
-      if (task.is_paused && task.last_paused_at) {
-          const finalPause = new Date(now).getTime() - new Date(task.last_paused_at).getTime();
-          updates.total_pause = (task.total_pause || 0) + finalPause;
-      }
-
-      setTasks(prev => prev.map(t => t.id === task.id ? { ...t, ...updates } : t));
-      await supabase.from('tasks').update(updates).eq('id', task.id);
+    if (!error) {
+        fetchData();
+        setIsModalOpen(false);
+        setNewTask({ 
+            title: '', category_id: '', client_id: '', origin_id: '', 
+            priority: 'Media', quadrant: 'not_urgent_important', 
+            deadline: '', description: '', checklist: [], is_waiting_list: false 
+        });
+        setChecklistInput('');
     }
   };
 
-  // --- OUTRAS AÇÕES ---
-  const toggleChecklistItem = async (task, itemIndex) => {
-    const newChecklist = [...task.checklist];
-    newChecklist[itemIndex].done = !newChecklist[itemIndex].done;
-    setTasks(tasks.map(t => t.id === task.id ? { ...t, checklist: newChecklist } : t));
-    await supabase.from('tasks').update({ checklist: newChecklist }).eq('id', task.id);
-  };
-
-  const deleteTask = async (id) => {
-    if (window.confirm('Excluir permanentemente?')) {
+  const handleDelete = async (id) => {
+      if (!confirm('Excluir?')) return;
       await supabase.from('tasks').delete().eq('id', id);
       fetchData();
-    }
   };
 
-  // --- RENDERIZADORES ---
-  const getProgress = (checklist) => {
-    if (!checklist || checklist.length === 0) return 0;
-    const doneCount = checklist.filter(i => i.done).length;
-    return Math.round((doneCount / checklist.length) * 100);
+  const handleStatusChange = async (id, newStatus) => {
+      if (newStatus === 'done') {
+          const now = new Date().toISOString();
+          await supabase.from('tasks').update({ status: 'done', completed_at: now }).eq('id', id);
+
+          // Promove próxima da lista
+          if (currentTask && currentTask.id === id && waitingList.length > 0) {
+              const nextTask = waitingList[0];
+              await supabase
+                .from('tasks')
+                .update({ is_waiting_list: false, priority: 'urgent_important', status: 'todo' })
+                .eq('id', nextTask.id);
+          }
+          fetchData();
+      }
   };
 
-  // Formata duração em milissegundos para string legível
-  const formatTimeSpent = (startStr, endStr, totalPauseMs = 0) => {
-     if (!startStr || !endStr) return '-';
-     const start = new Date(startStr).getTime();
-     const end = new Date(endStr).getTime();
-     
-     // Tempo Líquido = (Fim - Início) - Pausas
-     const netDurationMs = (end - start) - totalPauseMs;
-     
-     if (netDurationMs <= 0) return '0 min';
-
-     const duration = intervalToDuration({ start: 0, end: netDurationMs });
-     return formatDuration(duration, { 
-        locale: ptBR, 
-        format: ['days', 'hours', 'minutes'], 
-        delimiter: ', ' 
-     }) || 'Menos de 1 min';
+  const handleTimerToggle = async (task) => {
+      const now = new Date().toISOString();
+      let updates = {};
+      if (task.status === 'todo') updates = { status: 'doing', started_at: now, is_paused: false };
+      else if (task.status === 'doing') {
+          if (task.is_paused) {
+              const pauseStart = new Date(task.last_paused_at).getTime();
+              const pauseEnd = new Date().getTime();
+              const additionalPause = pauseEnd - pauseStart;
+              updates = { is_paused: false, last_paused_at: null, total_pause: (task.total_pause || 0) + additionalPause };
+          } else {
+              updates = { is_paused: true, last_paused_at: now };
+          }
+      }
+      await supabase.from('tasks').update(updates).eq('id', task.id);
+      fetchData();
   };
 
-  const TaskCard = ({ task }) => {
-    const progress = getProgress(task.checklist);
-    const isReady = progress === 100 || (!task.checklist || task.checklist.length === 0);
-    const hasStarted = !!task.started_at;
+  const handleMoveWaitList = async (task, direction) => {
+      const currentIndex = waitingList.findIndex(t => t.id === task.id);
+      if (currentIndex === -1) return;
+      const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+      if (targetIndex < 0 || targetIndex >= waitingList.length) return;
 
-    return (
-      <div className={`
-        bg-surface p-4 rounded-xl border shadow-sm group transition-all flex flex-col h-full relative
-        ${task.is_paused ? 'border-yellow-500/30' : hasStarted ? 'border-brand-cyan/30' : 'border-white/5'}
-      `}>
-        {/* Header do Card */}
-        <div className="flex justify-between items-start mb-2">
-           <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${task.categories?.color || 'bg-gray-700'} text-white`}>
-             {task.categories?.name || 'Geral'}
-           </span>
-           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button onClick={() => openModal(task)} className="p-1 hover:text-brand-cyan"><Edit2 className="w-3 h-3" /></button>
-              <button onClick={() => deleteTask(task.id)} className="p-1 hover:text-red-500"><Trash2 className="w-3 h-3" /></button>
-           </div>
-        </div>
+      const targetTask = waitingList[targetIndex];
+      const posA = task.list_position;
+      const posB = targetTask.list_position;
+      const finalPosA = posA === posB ? posA + 1 : posB;
+      const finalPosB = posA === posB ? posA : posA;
 
-        <h3 className="text-white font-bold text-sm mb-1">{task.title}</h3>
-        {task.clients && (
-           <p className="text-xs text-gray-400 mb-2 truncate flex items-center gap-1">
-             <Building className="w-3 h-3" /> {task.clients.razao_social}
-           </p>
-        )}
-        
-        {/* Controles de Execução */}
-        <div className="mb-3">
-            {!hasStarted ? (
-                // Botão Iniciar (Primeira vez)
-                <button 
-                    onClick={() => handlePlay(task)}
-                    className="w-full bg-brand-cyan/10 hover:bg-brand-cyan/20 text-brand-cyan border border-brand-cyan/20 py-1.5 rounded-lg flex items-center justify-center gap-2 text-xs font-bold transition-colors"
-                >
-                    <Play className="w-3 h-3 fill-current" /> Iniciar Execução
-                </button>
-            ) : (
-                // Controles Play/Pause
-                <div className="flex items-center gap-2 bg-black/20 p-2 rounded-lg border border-white/5">
-                    <div className="flex-1 text-[10px]">
-                        <span className="text-gray-400 block">Início: {format(new Date(task.started_at), 'dd/MM HH:mm')}</span>
-                        {task.is_paused ? (
-                            <span className="text-yellow-500 font-bold flex items-center gap-1"><Clock className="w-3 h-3"/> Pausado</span>
-                        ) : (
-                            <span className="text-brand-cyan font-bold flex items-center gap-1"><Clock className="w-3 h-3"/> Em execução...</span>
-                        )}
-                    </div>
-                    {task.is_paused ? (
-                         <button onClick={() => handlePlay(task)} className="p-2 bg-green-500/20 text-green-500 rounded hover:bg-green-500/30" title="Retomar">
-                             <Play className="w-4 h-4 fill-current" />
-                         </button>
-                    ) : (
-                         <button onClick={() => handlePause(task)} className="p-2 bg-yellow-500/20 text-yellow-500 rounded hover:bg-yellow-500/30" title="Pausar">
-                             <Pause className="w-4 h-4 fill-current" />
-                         </button>
-                    )}
-                </div>
-            )}
-        </div>
-
-        {/* Checklist */}
-        <div className="mt-auto space-y-2">
-          {task.checklist?.length > 0 && (
-             <div className="w-full bg-black/20 h-1.5 rounded-full overflow-hidden mb-2">
-                <div className={`h-full transition-all duration-500 ${progress === 100 ? 'bg-emerald-500' : 'bg-brand-cyan'}`} style={{ width: `${progress}%` }}></div>
-             </div>
-          )}
-
-          <div className="space-y-1">
-             {task.checklist?.slice(0, 3).map((item, idx) => (
-                <div key={idx} onClick={() => toggleChecklistItem(task, idx)} className="flex items-start gap-2 cursor-pointer group/item">
-                   {item.done ? <CheckSquare className="w-3 h-3 text-emerald-500 mt-0.5 shrink-0" /> : <Square className="w-3 h-3 text-gray-500 group-hover/item:text-brand-cyan mt-0.5 shrink-0" />}
-                   <span className={`text-xs ${item.done ? 'text-gray-500 line-through' : 'text-gray-300'}`}>{item.text}</span>
-                </div>
-             ))}
-             {task.checklist?.length > 3 && <span className="text-[10px] text-gray-500 italic">+ {task.checklist.length - 3} itens...</span>}
-          </div>
-
-          <button 
-            onClick={() => completeTask(task)} 
-            disabled={!isReady || !!task.completed_at} 
-            className={`w-full mt-3 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all 
-                ${isReady && !task.completed_at 
-                    ? 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 cursor-pointer' 
-                    : 'bg-gray-700/20 text-gray-600 cursor-not-allowed'
-                }`}
-          >
-             <CheckCircle className="w-3 h-3" /> {task.completed_at ? 'Concluída' : 'Concluir'}
-          </button>
-        </div>
-      </div>
-    );
+      await supabase.from('tasks').update({ list_position: finalPosA }).eq('id', task.id);
+      await supabase.from('tasks').update({ list_position: finalPosB }).eq('id', targetTask.id);
+      fetchData();
   };
 
-  const q1 = tasks.filter(t => t.quadrant === 1 && t.status !== 'done');
-  const q2 = tasks.filter(t => t.quadrant === 2 && t.status !== 'done');
-  const q3 = tasks.filter(t => t.quadrant === 3 && t.status !== 'done');
-  const q4 = tasks.filter(t => t.quadrant === 4 && t.status !== 'done');
-  const finished = tasks.filter(t => t.status === 'done');
+  // Funções do Checklist
+  const addChecklistItem = () => {
+      if (checklistInput.trim()) {
+          setNewTask(prev => ({ ...prev, checklist: [...prev.checklist, checklistInput] }));
+          setChecklistInput('');
+      }
+  };
+
+  const removeChecklistItem = (idx) => {
+      setNewTask(prev => ({ ...prev, checklist: prev.checklist.filter((_, i) => i !== idx) }));
+  };
 
   return (
-    <div className="min-h-screen bg-background p-8 font-sans flex flex-col">
-       {/* Header */}
-       <div className="flex justify-between items-center mb-6">
-         <div className="flex items-center gap-4">
-             <button onClick={() => navigate('/home')} className="bg-surface hover:bg-surfaceHover p-2 rounded-lg text-gray-400 hover:text-white transition-colors"><ChevronLeft className="w-6 h-6" /></button>
-             <div>
-               <h1 className="text-2xl font-bold text-white">Matriz de Eisenhower</h1>
-               <p className="text-gray-500 text-sm">Priorize com inteligência</p>
-             </div>
-         </div>
-         <button onClick={() => openModal()} className="bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-lg active:scale-95">
+    <div className="min-h-screen bg-background p-8 font-sans flex flex-col overflow-hidden">
+      
+      {/* HEADER */}
+      <div className="flex justify-between items-center mb-6">
+        <div className="flex items-center gap-4">
+            <button onClick={() => navigate('/home')} className="bg-surface hover:bg-surfaceHover p-2 rounded-lg text-gray-400 hover:text-white transition-colors">
+                <ChevronLeft className="w-6 h-6" />
+            </button>
+            <div>
+              <h1 className="text-2xl font-bold text-white">Matriz de Eisenhower</h1>
+              <p className="text-gray-500 text-sm">Fluxo de Foco Único</p>
+            </div>
+        </div>
+        
+        <button 
+            onClick={() => setIsModalOpen(true)}
+            className="bg-brand-cyan hover:bg-cyan-600 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 shadow-lg transition-all active:scale-95"
+        >
             <Plus className="w-5 h-5" /> Nova Tarefa
-         </button>
-       </div>
+        </button>
+      </div>
 
-       {/* Matriz */}
-       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1 mb-8">
-          <div className="bg-red-500/5 border border-red-500/20 rounded-2xl p-4 flex flex-col">
-             <h2 className="text-red-500 font-bold mb-4 flex justify-between"><span>1. Fazer Agora</span> <span className="text-xs bg-red-500/10 px-2 py-0.5 rounded">{q1.length}</span></h2>
-             <div className="space-y-3 flex-1 overflow-y-auto max-h-[400px] custom-scrollbar pr-2">{q1.map(t => <TaskCard key={t.id} task={t} />)}</div>
-          </div>
-          <div className="bg-blue-500/5 border border-blue-500/20 rounded-2xl p-4 flex flex-col">
-             <h2 className="text-blue-500 font-bold mb-4 flex justify-between"><span>2. Agendar</span> <span className="text-xs bg-blue-500/10 px-2 py-0.5 rounded">{q2.length}</span></h2>
-             <div className="space-y-3 flex-1 overflow-y-auto max-h-[400px] custom-scrollbar pr-2">{q2.map(t => <TaskCard key={t.id} task={t} />)}</div>
-          </div>
-          <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-2xl p-4 flex flex-col">
-             <h2 className="text-yellow-500 font-bold mb-4 flex justify-between"><span>3. Delegar</span> <span className="text-xs bg-yellow-500/10 px-2 py-0.5 rounded">{q3.length}</span></h2>
-             <div className="space-y-3 flex-1 overflow-y-auto max-h-[400px] custom-scrollbar pr-2">{q3.map(t => <TaskCard key={t.id} task={t} />)}</div>
-          </div>
-          <div className="bg-gray-500/5 border border-gray-500/20 rounded-2xl p-4 flex flex-col">
-             <h2 className="text-gray-500 font-bold mb-4 flex justify-between"><span>4. Eliminar</span> <span className="text-xs bg-gray-500/10 px-2 py-0.5 rounded">{q4.length}</span></h2>
-             <div className="space-y-3 flex-1 overflow-y-auto max-h-[400px] custom-scrollbar pr-2">{q4.map(t => <TaskCard key={t.id} task={t} />)}</div>
-          </div>
-       </div>
+      <div className="flex gap-6 flex-1 h-full min-h-0">
+          
+          {/* COLUNA ESQUERDA: LISTA DE ESPERA & FOCO */}
+          <div className="w-1/3 flex flex-col gap-6 h-full">
+              
+              {/* 1. LISTA DE ESPERA */}
+              <div className="flex-1 bg-surface/30 rounded-2xl border border-purple-500/30 flex flex-col overflow-hidden relative">
+                  <div className="p-3 bg-purple-500/10 border-b border-purple-500/20 flex justify-between items-center">
+                      <h3 className="font-bold text-purple-300 flex items-center gap-2">
+                          <List className="w-4 h-4" /> Lista de Espera
+                      </h3>
+                      <span className="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded font-mono">{waitingList.length}</span>
+                  </div>
+                  <div className="flex-1 p-3 overflow-y-auto custom-scrollbar space-y-2">
+                      {waitingList.map((task, idx) => (
+                          <TaskCard 
+                              key={task.id} task={task} index={idx}
+                              isWaitingList={true}
+                              isFirst={idx === 0}
+                              isLast={idx === waitingList.length - 1}
+                              onDelete={handleDelete}
+                              onMoveUp={() => handleMoveWaitList(task, 'up')}
+                              onMoveDown={() => handleMoveWaitList(task, 'down')}
+                          />
+                      ))}
+                      {waitingList.length === 0 && (
+                          <div className="text-center text-gray-600 py-10 text-sm">Lista vazia.</div>
+                      )}
+                  </div>
+              </div>
 
-       {/* Finalizadas */}
-       <div className="bg-surface border border-white/5 rounded-2xl p-6 mt-6">
-          <h2 className="text-emerald-500 font-bold mb-4 flex items-center gap-2">
-             <CheckCircle className="w-5 h-5" /> Finalizadas Recentemente
-          </h2>
-          <div className="overflow-x-auto">
-             <table className="w-full text-left border-collapse">
-                <thead>
-                   <tr className="border-b border-white/10 text-xs font-bold text-gray-500 uppercase">
-                      <th className="p-3 whitespace-nowrap">Início</th>
-                      <th className="p-3 whitespace-nowrap">Fim</th>
-                      <th className="p-3 whitespace-nowrap text-brand-cyan">Tempo Gasto</th>
-                      <th className="p-3 w-1/4">Título</th>
-                      <th className="p-3">Cliente</th>
-                      <th className="p-3 w-1/3">Descrição</th>
-                   </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                   {finished.map(t => (
-                      <tr key={t.id} className="hover:bg-white/5 transition-colors text-sm group">
-                         <td className="p-3 text-gray-400 whitespace-nowrap">{t.started_at ? format(new Date(t.started_at), 'dd/MM/yy HH:mm') : '-'}</td>
-                         <td className="p-3 text-emerald-500 font-medium whitespace-nowrap">{t.completed_at ? format(new Date(t.completed_at), 'dd/MM/yy HH:mm') : '-'}</td>
-                         <td className="p-3 text-brand-cyan font-bold whitespace-nowrap">
-                             {formatTimeSpent(t.started_at, t.completed_at, t.total_pause)}
-                         </td>
-                         <td className="p-3 text-white font-bold">{t.title}</td>
-                         <td className="p-3 text-gray-300 whitespace-nowrap">{t.clients?.razao_social || <span className="text-gray-600 italic text-xs">Geral</span>}</td>
-                         <td className="p-3 text-gray-500 truncate max-w-xs" title={t.description}>{t.description || '-'}</td>
-                      </tr>
-                   ))}
-                   {finished.length === 0 && <tr><td colSpan="7" className="p-8 text-center text-gray-500 italic">Nenhuma tarefa finalizada encontrada.</td></tr>}
-                </tbody>
-             </table>
-          </div>
-       </div>
+              {/* 2. QUADRO FOCO (Fazer Agora) - FIXO */}
+              <div className="h-48 bg-gradient-to-br from-brand-cyan/20 to-surface border border-brand-cyan/50 rounded-2xl flex flex-col shadow-[0_0_20px_rgba(8,145,178,0.2)]">
+                  <div className="p-3 border-b border-brand-cyan/30 flex justify-between items-center">
+                      <h3 className="font-bold text-brand-cyan flex items-center gap-2">
+                          <Zap className="w-4 h-4 fill-brand-cyan" /> 1. Fazer Agora (Foco)
+                      </h3>
+                  </div>
+                  <div className="flex-1 p-4 flex items-center justify-center">
+                      {currentTask ? (
+                          <div className="w-full">
+                              <TaskCard 
+                                  task={currentTask} index={0} 
+                                  onDelete={handleDelete} 
+                                  onStatusChange={handleStatusChange} 
+                                  onTimerToggle={handleTimerToggle}
+                              />
+                          </div>
+                      ) : (
+                          <div className="text-gray-500 text-sm italic text-center">
+                              {waitingList.length > 0 ? "Conclua a tarefa atual ou mova da lista de espera." : "Nada para fazer agora."}
+                          </div>
+                      )}
+                  </div>
+              </div>
 
-       {/* MODAL (Unificado) */}
-       {isModalOpen && (
-         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 animate-fade-in p-4">
-            <div className="bg-surface rounded-2xl w-full max-w-lg border border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-               <div className="p-4 border-b border-white/10 flex justify-between items-center bg-surface">
-                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                      {currentTask ? <Edit2 className="w-4 h-4 text-brand-cyan"/> : <Plus className="w-4 h-4 text-brand-cyan"/>}
-                      {currentTask ? 'Editar Tarefa' : 'Nova Tarefa'}
-                  </h2>
-                  <button onClick={() => setIsModalOpen(false)}><X className="w-5 h-5 text-gray-400 hover:text-white" /></button>
-               </div>
-               
-               <div className="p-6 overflow-y-auto custom-scrollbar space-y-4">
-                  {/* Categoria e Título */}
-                  <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-xs font-bold text-gray-500 uppercase">Categoria da Tarefa</label>
-                        <select 
-                            value={selectedTaskCategory} 
-                            onChange={(e) => {
-                                setSelectedTaskCategory(e.target.value);
-                                setFormData({...formData, title: ''});
-                            }} 
-                            className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-white outline-none focus:border-brand-cyan"
-                        >
-                            <option value="">Selecione...</option>
-                            {uniqueTaskCategories.map(cat => (
-                                <option key={cat} value={cat}>{cat}</option>
-                            ))}
-                        </select>
+          </div>
+
+          {/* COLUNA CENTRAL: QUADRANTES 2, 3, 4 */}
+          <div className="flex-1 flex flex-col gap-4 h-full">
+             <DragDropContext onDragEnd={handleDragEnd}>
+                 {/* Q2 */}
+                 <div className="flex-1 bg-surface/50 rounded-2xl border border-t-blue-500 border-t-4 flex flex-col overflow-hidden">
+                     <div className="p-2 border-b border-white/5 bg-blue-500/5 flex justify-between">
+                         <h3 className="font-bold text-white text-sm">2. Agendar</h3>
+                         <span className="text-xs text-gray-400">{otherTasks.filter(t => t.priority === 'not_urgent_important').length}</span>
+                     </div>
+                     <Droppable droppableId="not_urgent_important">
+                         {(provided) => (
+                             <div {...provided.droppableProps} ref={provided.innerRef} className="flex-1 p-3 overflow-y-auto custom-scrollbar">
+                                 {otherTasks.filter(t => t.priority === 'not_urgent_important').map((t, i) => (
+                                     <TaskCard key={t.id} task={t} index={i} onDelete={handleDelete} onStatusChange={handleStatusChange} onTimerToggle={handleTimerToggle} />
+                                 ))}
+                                 {provided.placeholder}
+                             </div>
+                         )}
+                     </Droppable>
+                 </div>
+
+                 {/* Q3 e Q4 lado a lado */}
+                 <div className="flex-1 flex gap-4 min-h-0">
+                     <div className="flex-1 bg-surface/50 rounded-2xl border border-t-yellow-500 border-t-4 flex flex-col overflow-hidden">
+                         <div className="p-2 border-b border-white/5 bg-yellow-500/5 flex justify-between">
+                             <h3 className="font-bold text-white text-sm">3. Delegar</h3>
+                             <span className="text-xs text-gray-400">{otherTasks.filter(t => t.priority === 'urgent_not_important').length}</span>
+                         </div>
+                         <Droppable droppableId="urgent_not_important">
+                             {(provided) => (
+                                 <div {...provided.droppableProps} ref={provided.innerRef} className="flex-1 p-3 overflow-y-auto custom-scrollbar">
+                                     {otherTasks.filter(t => t.priority === 'urgent_not_important').map((t, i) => (
+                                         <TaskCard key={t.id} task={t} index={i} onDelete={handleDelete} onStatusChange={handleStatusChange} onTimerToggle={handleTimerToggle} />
+                                     ))}
+                                     {provided.placeholder}
+                                 </div>
+                             )}
+                         </Droppable>
+                     </div>
+
+                     <div className="flex-1 bg-surface/50 rounded-2xl border border-t-gray-500 border-t-4 flex flex-col overflow-hidden">
+                         <div className="p-2 border-b border-white/5 bg-gray-500/5 flex justify-between">
+                             <h3 className="font-bold text-white text-sm">4. Eliminar</h3>
+                             <span className="text-xs text-gray-400">{otherTasks.filter(t => t.priority === 'not_urgent_not_important').length}</span>
+                         </div>
+                         <Droppable droppableId="not_urgent_not_important">
+                             {(provided) => (
+                                 <div {...provided.droppableProps} ref={provided.innerRef} className="flex-1 p-3 overflow-y-auto custom-scrollbar">
+                                     {otherTasks.filter(t => t.priority === 'not_urgent_not_important').map((t, i) => (
+                                         <TaskCard key={t.id} task={t} index={i} onDelete={handleDelete} onStatusChange={handleStatusChange} onTimerToggle={handleTimerToggle} />
+                                     ))}
+                                     {provided.placeholder}
+                                 </div>
+                             )}
+                         </Droppable>
+                     </div>
+                 </div>
+             </DragDropContext>
+          </div>
+
+          {/* COLUNA DIREITA: FINALIZADAS */}
+          <div className="w-64 bg-surface rounded-2xl border border-white/5 flex flex-col overflow-hidden">
+              <div className="p-4 border-b border-white/5 bg-surface">
+                  <h3 className="font-bold text-white flex items-center gap-2 text-sm">
+                      <CheckCircle className="w-4 h-4 text-emerald-500" /> Finalizadas
+                  </h3>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
+                  {recentTasks.map(task => (
+                      <div key={task.id} className="bg-black/20 p-2 rounded border border-white/5 opacity-60 hover:opacity-100 transition-opacity">
+                          <h4 className="text-gray-400 font-medium text-xs">{task.title}</h4> {/* LINHA ALTERADA AQUI */}
+                          <div className="flex justify-between items-center mt-1 text-[9px] text-gray-600">
+                              <span>{task.clients?.razao_social?.slice(0, 15) || '-'}</span>
+                              <span>{task.completed_at ? format(new Date(task.completed_at), 'HH:mm') : '-'}</span>
+                          </div>
                       </div>
-                      <div>
-                        <label className="text-xs font-bold text-gray-500 uppercase">Título (Padrão)</label>
-                        <select 
-                            value={formData.title} 
-                            onChange={(e) => setFormData({...formData, title: e.target.value})} 
-                            disabled={!selectedTaskCategory}
-                            className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-white outline-none focus:border-brand-cyan disabled:opacity-50"
-                        >
-                            <option value="">Selecione o Título...</option>
-                            {filteredTitles.map(item => (
-                                <option key={item.id} value={item.subcategoria_task}>{item.subcategoria_task}</option>
-                            ))}
-                        </select>
-                      </div>
+                  ))}
+              </div>
+          </div>
+
+      </div>
+
+      {/* MODAL NOVA TAREFA (LAYOUT ATUALIZADO) */}
+      {isModalOpen && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-fade-in">
+              <div className="bg-surface rounded-2xl w-full max-w-2xl border border-white/10 p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
+                  <div className="flex justify-between items-center mb-6 border-b border-white/10 pb-4">
+                      <h2 className="text-xl font-bold text-white">Nova Tarefa</h2>
+                      <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-white"><X className="w-6 h-6"/></button>
                   </div>
                   
-                  {/* Cliente e Origem */}
-                  <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-xs font-bold text-gray-500 uppercase">Cliente</label>
-                        <select value={formData.client_id} onChange={(e) => setFormData({...formData, client_id: e.target.value})} className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-white outline-none focus:border-brand-cyan">
-                            <option value="">Geral (Sem cliente)</option>
-                            {clients.map(c => <option key={c.id} value={c.id}>{c.razao_social}</option>)}
-                        </select>
+                  <form onSubmit={handleCreateTask} className="space-y-4">
+                      
+                      {/* LINHA 1: Categoria e Título Padrão */}
+                      <div className="grid grid-cols-2 gap-4">
+                          <div>
+                              <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Categoria da Tarefa</label>
+                              <select 
+                                  className="w-full bg-black/20 border border-white/10 rounded-lg p-3 text-white text-sm outline-none"
+                                  value={newTask.category_id}
+                                  onChange={e => setNewTask({...newTask, category_id: e.target.value})}
+                              >
+                                  <option value="">Selecione...</option>
+                                  {taskCategories.map(c => <option key={c.id} value={c.id} className="bg-surface">{c.categoria_task}</option>)}
+                              </select>
+                          </div>
+                          <div>
+                              <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Título (Padrão)</label>
+                              <select 
+                                  className="w-full bg-black/20 border border-white/10 rounded-lg p-3 text-white text-sm outline-none"
+                                  value={newTask.title}
+                                  onChange={e => setNewTask({...newTask, title: e.target.value})}
+                              >
+                                  <option value="">Selecione o Título...</option>
+                                  {taskCategories.map(c => <option key={c.id} value={c.subcategoria_task} className="bg-surface">{c.subcategoria_task}</option>)}
+                              </select>
+                          </div>
                       </div>
-                      <div>
-                        <label className="text-xs font-bold text-gray-500 uppercase">Origem</label>
-                        <select value={formData.category_id} onChange={(e) => setFormData({...formData, category_id: e.target.value})} className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-white outline-none focus:border-brand-cyan">
-                            <option value="">Selecione...</option>
-                            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
+
+                      {/* LINHA 2: Cliente e Origem */}
+                      <div className="grid grid-cols-2 gap-4">
+                          <div>
+                              <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Cliente</label>
+                              <select 
+                                  className="w-full bg-black/20 border border-white/10 rounded-lg p-3 text-white text-sm outline-none"
+                                  value={newTask.client_id}
+                                  onChange={e => setNewTask({...newTask, client_id: e.target.value})}
+                              >
+                                  <option value="">Geral (Sem cliente)</option>
+                                  {clients.map(c => <option key={c.id} value={c.id} className="bg-surface">{c.razao_social}</option>)}
+                              </select>
+                          </div>
+                          <div>
+                              <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Origem</label>
+                              <select 
+                                  className="w-full bg-black/20 border border-white/10 rounded-lg p-3 text-white text-sm outline-none"
+                                  value={newTask.origin_id}
+                                  onChange={e => setNewTask({...newTask, origin_id: e.target.value})}
+                              >
+                                  <option value="">Selecione...</option>
+                                  {categories.map(c => <option key={c.id} value={c.id} className="bg-surface">{c.name}</option>)}
+                              </select>
+                          </div>
                       </div>
-                  </div>
 
-                  {/* Prioridade e Quadrante */}
-                  <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-xs font-bold text-gray-500 uppercase">Prioridade</label>
-                        <select value={formData.priority} onChange={(e) => setFormData({...formData, priority: e.target.value})} className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-white outline-none focus:border-brand-cyan">
-                            <option>Baixa</option>
-                            <option>Média</option>
-                            <option>Alta</option>
-                        </select>
+                      {/* LINHA 3: Prioridade e Quadrante (Com Toggle) */}
+                      <div className="grid grid-cols-2 gap-4">
+                          <div>
+                              <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Prioridade</label>
+                              <select 
+                                  className="w-full bg-black/20 border border-white/10 rounded-lg p-3 text-white text-sm outline-none"
+                                  value={newTask.priority}
+                                  onChange={e => setNewTask({...newTask, priority: e.target.value})}
+                              >
+                                  <option value="Baixa">Baixa</option>
+                                  <option value="Media">Média</option>
+                                  <option value="Alta">Alta</option>
+                              </select>
+                          </div>
+                          
+                          <div className="flex flex-col">
+                              <label className="text-xs font-bold text-gray-500 uppercase mb-1 block flex justify-between">
+                                  <span>Quadrante</span>
+                                  {/* TOGGLE LISTA DE ESPERA DENTRO DO LABEL */}
+                                  <div className="flex items-center gap-1 cursor-pointer" onClick={() => setNewTask(p => ({...p, is_waiting_list: !p.is_waiting_list}))}>
+                                      <span className={`text-[10px] ${newTask.is_waiting_list ? 'text-purple-400' : 'text-gray-500'}`}>Lista de Espera</span>
+                                      {newTask.is_waiting_list ? <ToggleRight className="w-5 h-5 text-purple-500"/> : <ToggleLeft className="w-5 h-5 text-gray-600"/>}
+                                  </div>
+                              </label>
+                              <select 
+                                  className={`w-full bg-black/20 border border-white/10 rounded-lg p-3 text-white text-sm outline-none transition-opacity ${newTask.is_waiting_list ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                  value={newTask.quadrant}
+                                  onChange={e => setNewTask({...newTask, quadrant: e.target.value})}
+                                  disabled={newTask.is_waiting_list}
+                              >
+                                  {newTask.is_waiting_list ? <option>Enviado para Lista de Espera...</option> : (
+                                      <>
+                                        <option value="urgent_important">1. Fazer Agora</option>
+                                        <option value="not_urgent_important">2. Agendar</option>
+                                        <option value="urgent_not_important">3. Delegar</option>
+                                        <option value="not_urgent_not_important">4. Eliminar</option>
+                                      </>
+                                  )}
+                              </select>
+                          </div>
                       </div>
+
+                      {/* LINHA 4: Prazo */}
                       <div>
-                        <label className="text-xs font-bold text-gray-500 uppercase">Quadrante</label>
-                        <select value={formData.quadrant} onChange={(e) => setFormData({...formData, quadrant: e.target.value})} className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-white outline-none focus:border-brand-cyan">
-                            <option value="1">1. Fazer Agora</option>
-                            <option value="2">2. Agendar</option>
-                            <option value="3">3. Delegar</option>
-                            <option value="4">4. Eliminar</option>
-                        </select>
+                          <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Prazo</label>
+                          <input 
+                              type="date"
+                              className="w-full bg-black/20 border border-white/10 rounded-lg p-3 text-white text-sm outline-none [&::-webkit-calendar-picker-indicator]:invert"
+                              value={newTask.deadline}
+                              onChange={e => setNewTask({...newTask, deadline: e.target.value})}
+                          />
                       </div>
-                  </div>
 
-                  {/* Data e Descrição */}
-                  <div>
-                    <label className="text-xs font-bold text-gray-500 uppercase">Prazo</label>
-                    <input type="date" value={formData.due_date} onChange={(e) => setFormData({...formData, due_date: e.target.value})} className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-white outline-none focus:border-brand-cyan [&::-webkit-calendar-picker-indicator]:invert" />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-gray-500 uppercase">Descrição</label>
-                    <textarea rows="3" value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})} className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-white outline-none resize-none" />
-                  </div>
+                      {/* LINHA 5: Descrição */}
+                      <div>
+                          <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Descrição</label>
+                          <textarea 
+                              rows="3"
+                              className="w-full bg-black/20 border border-white/10 rounded-lg p-3 text-white text-sm outline-none resize-none"
+                              value={newTask.description}
+                              onChange={e => setNewTask({...newTask, description: e.target.value})}
+                          ></textarea>
+                      </div>
 
-                  {/* Checklist */}
-                  <div className="bg-white/5 p-4 rounded-xl border border-white/5">
-                     <label className="text-xs font-bold text-brand-cyan uppercase mb-2 block">Checklist</label>
-                     <div className="flex gap-2 mb-2">
-                        <input type="text" value={checklistInput} onChange={(e) => setChecklistInput(e.target.value)} placeholder="Novo item..." className="flex-1 bg-background border border-white/10 rounded px-2 py-1 text-sm text-white" />
-                        <button onClick={() => {
-                           if(!checklistInput.trim()) return;
-                           setFormData({...formData, checklist: [...(formData.checklist || []), {text: checklistInput, done: false}]});
-                           setChecklistInput('');
-                        }} className="bg-brand-cyan p-1.5 rounded text-white"><Plus className="w-4 h-4"/></button>
-                     </div>
-                     <div className="space-y-1 max-h-32 overflow-y-auto custom-scrollbar">
-                        {formData.checklist?.map((item, idx) => (
-                           <div key={idx} className="flex justify-between items-center bg-black/20 p-2 rounded">
-                              <span className="text-sm text-gray-300">{item.text}</span>
-                              <button onClick={() => {
-                                 const updated = formData.checklist.filter((_, i) => i !== idx);
-                                 setFormData({...formData, checklist: updated});
-                              }} className="text-red-500"><X className="w-3 h-3"/></button>
-                           </div>
-                        ))}
-                     </div>
-                  </div>
-               </div>
+                      {/* LINHA 6: Checklist */}
+                      <div>
+                          <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Checklist</label>
+                          <div className="flex gap-2 mb-2">
+                              <input 
+                                  type="text"
+                                  placeholder="Novo item..."
+                                  className="flex-1 bg-black/20 border border-white/10 rounded-lg p-2 text-white text-sm outline-none"
+                                  value={checklistInput}
+                                  onChange={e => setChecklistInput(e.target.value)}
+                                  onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addChecklistItem())}
+                              />
+                              <button type="button" onClick={addChecklistItem} className="bg-brand-cyan/20 text-brand-cyan p-2 rounded-lg hover:bg-brand-cyan hover:text-white transition-colors"><Plus className="w-5 h-5"/></button>
+                          </div>
+                          <div className="space-y-1">
+                              {newTask.checklist.map((item, idx) => (
+                                  <div key={idx} className="flex items-center justify-between bg-white/5 p-2 rounded text-xs text-gray-300">
+                                      <span>{item}</span>
+                                      <button type="button" onClick={() => removeChecklistItem(idx)} className="text-gray-500 hover:text-red-400"><X className="w-3 h-3"/></button>
+                                  </div>
+                              ))}
+                          </div>
+                      </div>
 
-               <div className="p-4 border-t border-white/10 flex gap-3 bg-surface">
-                  <button onClick={() => setIsModalOpen(false)} className="flex-1 py-2 text-gray-400 hover:text-white transition-colors">Cancelar</button>
-                  <button onClick={handleSave} className="flex-1 bg-brand-cyan hover:bg-cyan-600 py-2 rounded-lg text-white font-bold transition-colors shadow-lg">
-                      {currentTask ? 'Salvar Alterações' : 'Criar Tarefa'}
-                  </button>
-               </div>
-            </div>
-         </div>
-       )}
+                      <div className="flex gap-3 mt-6 pt-4 border-t border-white/10">
+                          <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-3 text-gray-400 hover:text-white transition-colors">Cancelar</button>
+                          <button type="submit" className="flex-1 bg-brand-cyan hover:bg-cyan-600 text-white font-bold rounded-xl shadow-lg transition-colors">Criar Tarefa</button>
+                      </div>
+                  </form>
+              </div>
+          </div>
+      )}
+
     </div>
   );
 }
