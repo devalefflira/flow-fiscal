@@ -12,94 +12,114 @@ import { ptBR } from 'date-fns/locale';
 
 // --- COMPONENTES AUXILIARES ---
 
-const TaskCard = ({ task, index, onDelete, onStatusChange, onTimerToggle, isWaitingList, onMoveUp, onMoveDown, isFirst, isLast }) => {
-  const isRunning = task.status === 'doing' && !task.is_paused;
-  
-  const formatMs = (ms) => {
-    if (ms < 0) ms = 0;
-    const duration = intervalToDuration({ start: 0, end: ms });
-    return formatDuration(duration, { format: ['hours', 'minutes'], locale: ptBR }) || '0min';
-  };
+// Card Interno (Visual)
+const CardContent = ({ task, isRunning, isWaitingList, onMoveUp, onMoveDown, isFirst, isLast, onDelete, onTimerToggle, onStatusChange }) => {
+    return (
+        <div className={`bg-surface p-4 rounded-xl mb-3 border shadow-sm group hover:border-brand-cyan/50 transition-all relative
+            ${isWaitingList ? 'border-l-4 border-l-purple-500' : 'border-white/5'}
+            ${isRunning ? 'border-l-4 border-l-brand-cyan' : ''}
+        `}>
+            <div className="flex justify-between items-start mb-2">
+                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider bg-black/20 px-1.5 py-0.5 rounded">
+                    {task.categories?.name || 'Geral'}
+                </span>
+                
+                {/* Ações da Lista de Espera */}
+                {isWaitingList && (
+                    <div className="flex gap-1">
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); onMoveUp(task); }}
+                            disabled={isFirst}
+                            className="p-1 rounded hover:bg-white/10 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                            <ArrowUp className="w-4 h-4" />
+                        </button>
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); onMoveDown(task); }}
+                            disabled={isLast}
+                            className="p-1 rounded hover:bg-white/10 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                            <ArrowDown className="w-4 h-4" />
+                        </button>
+                    </div>
+                )}
 
+                <div className={`flex gap-2 transition-opacity ${isWaitingList ? '' : 'opacity-0 group-hover:opacity-100'}`}>
+                    <button 
+                        onClick={(e) => { e.stopPropagation(); onDelete(task.id); }}
+                        className="text-gray-500 hover:text-red-500 transition-colors"
+                    >
+                        <Trash2 className="w-4 h-4" />
+                    </button>
+                </div>
+            </div>
+
+            <h4 className="text-white font-bold text-sm leading-snug mb-3">{task.title}</h4>
+            
+            <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/5">
+                <div className="flex items-center gap-1 text-gray-400 text-xs truncate max-w-[50%]">
+                    <span className="truncate" title={task.clients?.razao_social}>
+                        {task.clients?.razao_social || 'Sem Cliente'}
+                    </span>
+                </div>
+
+                {/* Controles apenas se não for Lista de Espera */}
+                {!isWaitingList && (
+                    <div className="flex items-center gap-2">
+                        {task.status !== 'done' && (
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); onTimerToggle(task); }}
+                                className={`p-1.5 rounded-lg transition-all flex items-center gap-1
+                                    ${isRunning ? 'bg-yellow-500/10 text-yellow-500' : 'bg-brand-cyan/10 text-brand-cyan'}
+                                `}
+                            >
+                                {isRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                            </button>
+                        )}
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); onStatusChange(task.id, 'done'); }}
+                            className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-all"
+                        >
+                            <CheckCircle className="w-4 h-4" />
+                        </button>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+// Componente Wrapper (Decide se usa Draggable ou Div normal)
+const TaskCard = ({ task, index, onDelete, onStatusChange, onTimerToggle, isWaitingList, onMoveUp, onMoveDown, isFirst, isLast, isDraggable = true }) => {
+  const isRunning = task.status === 'doing' && !task.is_paused;
+
+  // Se NÃO for arrastável (Lista de Espera ou Foco), renderiza direto
+  if (!isDraggable) {
+      return (
+        <CardContent 
+            task={task} isRunning={isRunning} isWaitingList={isWaitingList}
+            onMoveUp={onMoveUp} onMoveDown={onMoveDown} isFirst={isFirst} isLast={isLast}
+            onDelete={onDelete} onTimerToggle={onTimerToggle} onStatusChange={onStatusChange}
+        />
+      );
+  }
+
+  // Se for arrastável (Quadrantes 2, 3, 4), usa o Draggable
   return (
-    <Draggable draggableId={task.id.toString()} index={index} isDragDisabled={isWaitingList}>
+    <Draggable draggableId={task.id.toString()} index={index}>
       {(provided, snapshot) => (
         <div
           ref={provided.innerRef}
           {...provided.draggableProps}
           {...provided.dragHandleProps}
-          className={`bg-surface p-4 rounded-xl mb-3 border shadow-sm group hover:border-brand-cyan/50 transition-all relative
-            ${snapshot.isDragging ? 'shadow-2xl ring-2 ring-brand-cyan rotate-2' : 'border-white/5'}
-            ${isRunning ? 'border-l-4 border-l-brand-cyan' : ''}
-            ${isWaitingList ? 'border-l-4 border-l-purple-500' : ''}
-          `}
+          style={{ ...provided.draggableProps.style }}
+          className={snapshot.isDragging ? 'rotate-2 opacity-90' : ''}
         >
-          <div className="flex justify-between items-start mb-2">
-             <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider bg-black/20 px-1.5 py-0.5 rounded">
-                {task.categories?.name || 'Geral'}
-             </span>
-             
-             {/* Ações da Lista de Espera */}
-             {isWaitingList && (
-                 <div className="flex gap-1">
-                     <button 
-                        onClick={(e) => { e.stopPropagation(); onMoveUp(task); }}
-                        disabled={isFirst}
-                        className="p-1 rounded hover:bg-white/10 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
-                     >
-                         <ArrowUp className="w-4 h-4" />
-                     </button>
-                     <button 
-                        onClick={(e) => { e.stopPropagation(); onMoveDown(task); }}
-                        disabled={isLast}
-                        className="p-1 rounded hover:bg-white/10 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
-                     >
-                         <ArrowDown className="w-4 h-4" />
-                     </button>
-                 </div>
-             )}
-
-             <div className={`flex gap-2 transition-opacity ${isWaitingList ? '' : 'opacity-0 group-hover:opacity-100'}`}>
-                <button 
-                    onClick={(e) => { e.stopPropagation(); onDelete(task.id); }}
-                    className="text-gray-500 hover:text-red-500 transition-colors"
-                >
-                    <Trash2 className="w-4 h-4" />
-                </button>
-             </div>
-          </div>
-
-          <h4 className="text-white font-bold text-sm leading-snug mb-3">{task.title}</h4>
-          
-          <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/5">
-             <div className="flex items-center gap-1 text-gray-400 text-xs truncate max-w-[50%]">
-                <span className="truncate" title={task.clients?.razao_social}>
-                    {task.clients?.razao_social || 'Sem Cliente'}
-                </span>
-             </div>
-
-             {/* Controles apenas se não for Lista de Espera */}
-             {!isWaitingList && (
-                 <div className="flex items-center gap-2">
-                    {task.status !== 'done' && (
-                        <button 
-                            onClick={(e) => { e.stopPropagation(); onTimerToggle(task); }}
-                            className={`p-1.5 rounded-lg transition-all flex items-center gap-1
-                                ${isRunning ? 'bg-yellow-500/10 text-yellow-500' : 'bg-brand-cyan/10 text-brand-cyan'}
-                            `}
-                        >
-                            {isRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                        </button>
-                    )}
-                    <button 
-                        onClick={(e) => { e.stopPropagation(); onStatusChange(task.id, 'done'); }}
-                        className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-all"
-                    >
-                        <CheckCircle className="w-4 h-4" />
-                    </button>
-                 </div>
-             )}
-          </div>
+            <CardContent 
+                task={task} isRunning={isRunning} isWaitingList={isWaitingList}
+                onMoveUp={onMoveUp} onMoveDown={onMoveDown} isFirst={isFirst} isLast={isLast}
+                onDelete={onDelete} onTimerToggle={onTimerToggle} onStatusChange={onStatusChange}
+            />
         </div>
       )}
     </Draggable>
@@ -119,27 +139,25 @@ export default function EisenhowerMatrix() {
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [checklistInput, setChecklistInput] = useState('');
-  
-  // Estado para controlar o filtro de categoria no modal (Não salva no banco, só visual)
-  const [selectedTaskCategory, setSelectedTaskCategory] = useState('');
+  const [selectedTaskCategory, setSelectedTaskCategory] = useState(''); // Filtro visual
 
   const [newTask, setNewTask] = useState({ 
       title: '', 
-      category_id: '', // IDs
+      category_id: '', 
       client_id: '',
-      origin_id: '', // Origem
-      priority: 'Media', // Padrão visual
-      quadrant: 'not_urgent_important', // Default: 2. Agendar
+      origin_id: '', 
+      priority: 'Media', 
+      quadrant: 'not_urgent_important', 
       deadline: '',
       description: '',
-      checklist: [], // Array de strings
+      checklist: [], 
       is_waiting_list: false 
   });
   
   // Auxiliares
   const [categories, setCategories] = useState([]);
   const [clients, setClients] = useState([]);
-  const [taskCategories, setTaskCategories] = useState([]); // Títulos Padrão
+  const [taskCategories, setTaskCategories] = useState([]); 
 
   // --- BUSCA DE DADOS ---
   const fetchData = async () => {
@@ -171,9 +189,9 @@ export default function EisenhowerMatrix() {
       setRecentTasks(recent || []);
 
       // 3. Cadastros
-      const { data: cats } = await supabase.from('categories').select('*'); // Origem
+      const { data: cats } = await supabase.from('categories').select('*'); 
       const { data: clis } = await supabase.from('clients').select('id, razao_social');
-      const { data: tCats } = await supabase.from('task_categories').select('*'); // Títulos Padrão
+      const { data: tCats } = await supabase.from('task_categories').select('*'); 
 
       setCategories(cats || []);
       setClients(clis || []);
@@ -209,30 +227,26 @@ export default function EisenhowerMatrix() {
     e.preventDefault();
     if (!newTask.title) return;
 
-    // Define posição na lista de espera
     let position = 0;
     if (newTask.is_waiting_list && waitingList.length > 0) {
         position = Math.max(...waitingList.map(t => t.list_position || 0)) + 1;
     }
 
-    // Regra do Foco Único
-    let finalPriority = newTask.quadrant; // Pega do dropdown
+    let finalPriority = newTask.quadrant; 
     let finalWaiting = newTask.is_waiting_list;
 
-    // Se usuário tentar "Fazer Agora" e já tiver tarefa, vai para Lista de Espera
     if (finalPriority === 'urgent_important' && !finalWaiting && currentTask) {
         alert("Já existe uma tarefa em 'Fazer Agora'. Esta tarefa será enviada para a Lista de Espera.");
         finalWaiting = true;
         position = waitingList.length > 0 ? Math.max(...waitingList.map(t => t.list_position || 0)) + 1 : 1;
     }
 
-    // Se estiver na lista de espera, o quadrante técnico no banco é irrelevante, mas mantemos consistência
     if (finalWaiting) finalPriority = 'waiting_list'; 
 
     const { error } = await supabase.from('tasks').insert([{
         title: newTask.title,
-        priority: finalWaiting ? 'urgent_important' : finalPriority, // Se waitlist, fica "na fila" do urgente
-        category_id: newTask.origin_id || null, // Origem
+        priority: finalWaiting ? 'urgent_important' : finalPriority, 
+        category_id: newTask.origin_id || null, 
         client_id: newTask.client_id || null,
         status: 'todo',
         is_waiting_list: finalWaiting,
@@ -248,7 +262,7 @@ export default function EisenhowerMatrix() {
             priority: 'Media', quadrant: 'not_urgent_important', 
             deadline: '', description: '', checklist: [], is_waiting_list: false 
         });
-        setSelectedTaskCategory(''); // Reset filtro visual
+        setSelectedTaskCategory('');
         setChecklistInput('');
     }
   };
@@ -264,7 +278,6 @@ export default function EisenhowerMatrix() {
           const now = new Date().toISOString();
           await supabase.from('tasks').update({ status: 'done', completed_at: now }).eq('id', id);
 
-          // Promove próxima da lista
           if (currentTask && currentTask.id === id && waitingList.length > 0) {
               const nextTask = waitingList[0];
               await supabase
@@ -311,7 +324,6 @@ export default function EisenhowerMatrix() {
       fetchData();
   };
 
-  // Funções do Checklist
   const addChecklistItem = () => {
       if (checklistInput.trim()) {
           setNewTask(prev => ({ ...prev, checklist: [...prev.checklist, checklistInput] }));
@@ -363,6 +375,7 @@ export default function EisenhowerMatrix() {
                       {waitingList.map((task, idx) => (
                           <TaskCard 
                               key={task.id} task={task} index={idx}
+                              isDraggable={false} // IMPORTANTE: Desativa DnD
                               isWaitingList={true}
                               isFirst={idx === 0}
                               isLast={idx === waitingList.length - 1}
@@ -389,6 +402,7 @@ export default function EisenhowerMatrix() {
                           <div className="w-full">
                               <TaskCard 
                                   task={currentTask} index={0} 
+                                  isDraggable={false} // IMPORTANTE: Desativa DnD
                                   onDelete={handleDelete} 
                                   onStatusChange={handleStatusChange} 
                                   onTimerToggle={handleTimerToggle}
@@ -486,7 +500,7 @@ export default function EisenhowerMatrix() {
 
       </div>
 
-      {/* MODAL NOVA TAREFA (LAYOUT ATUALIZADO) */}
+      {/* MODAL NOVA TAREFA */}
       {isModalOpen && (
           <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-fade-in">
               <div className="bg-surface rounded-2xl w-full max-w-2xl border border-white/10 p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
@@ -506,11 +520,10 @@ export default function EisenhowerMatrix() {
                                   value={selectedTaskCategory}
                                   onChange={e => {
                                       setSelectedTaskCategory(e.target.value);
-                                      setNewTask(prev => ({...prev, title: ''})); // Limpa título se mudar categoria
+                                      setNewTask(prev => ({...prev, title: ''})); 
                                   }}
                               >
                                   <option value="">Selecione...</option>
-                                  {/* Map UNIQUE categories */}
                                   {[...new Set(taskCategories.map(c => c.categoria_task))].map(cat => (
                                       <option key={cat} value={cat} className="bg-surface">{cat}</option>
                                   ))}
@@ -525,7 +538,6 @@ export default function EisenhowerMatrix() {
                                   disabled={!selectedTaskCategory}
                               >
                                   <option value="">Selecione o Título...</option>
-                                  {/* Filter titles based on selected category */}
                                   {taskCategories
                                       .filter(c => c.categoria_task === selectedTaskCategory)
                                       .map(c => (
@@ -580,7 +592,6 @@ export default function EisenhowerMatrix() {
                           <div className="flex flex-col">
                               <label className="text-xs font-bold text-gray-500 uppercase mb-1 block flex justify-between">
                                   <span>Quadrante</span>
-                                  {/* TOGGLE LISTA DE ESPERA DENTRO DO LABEL */}
                                   <div className="flex items-center gap-1 cursor-pointer" onClick={() => setNewTask(p => ({...p, is_waiting_list: !p.is_waiting_list}))}>
                                       <span className={`text-[10px] ${newTask.is_waiting_list ? 'text-purple-400' : 'text-gray-500'}`}>Lista de Espera</span>
                                       {newTask.is_waiting_list ? <ToggleRight className="w-5 h-5 text-purple-500"/> : <ToggleLeft className="w-5 h-5 text-gray-600"/>}
