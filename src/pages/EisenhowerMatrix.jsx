@@ -12,10 +12,10 @@ import { ptBR } from 'date-fns/locale';
 
 // --- COMPONENTES AUXILIARES ---
 
-// Card Interno (Visual)
+// 1. Conteúdo Visual do Card (Sem lógica de Drag and Drop)
 const CardContent = ({ task, isRunning, isWaitingList, onMoveUp, onMoveDown, isFirst, isLast, onDelete, onTimerToggle, onStatusChange }) => {
     return (
-        <div className={`bg-surface p-4 rounded-xl mb-3 border shadow-sm group hover:border-brand-cyan/50 transition-all relative
+        <div className={`bg-surface p-4 rounded-xl mb-3 border shadow-sm group hover:border-brand-cyan/50 transition-all relative w-full
             ${isWaitingList ? 'border-l-4 border-l-purple-500' : 'border-white/5'}
             ${isRunning ? 'border-l-4 border-l-brand-cyan' : ''}
         `}>
@@ -54,7 +54,7 @@ const CardContent = ({ task, isRunning, isWaitingList, onMoveUp, onMoveDown, isF
                 </div>
             </div>
 
-            <h4 className="text-white font-bold text-sm leading-snug mb-3">{task.title}</h4>
+            <h4 className="text-white font-bold text-sm leading-snug mb-3 break-words">{task.title}</h4>
             
             <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/5">
                 <div className="flex items-center gap-1 text-gray-400 text-xs truncate max-w-[50%]">
@@ -89,11 +89,11 @@ const CardContent = ({ task, isRunning, isWaitingList, onMoveUp, onMoveDown, isF
     );
 };
 
-// Componente Wrapper (Decide se usa Draggable ou Div normal)
+// 2. Wrapper Inteligente (Decide se é Draggable ou não)
 const TaskCard = ({ task, index, onDelete, onStatusChange, onTimerToggle, isWaitingList, onMoveUp, onMoveDown, isFirst, isLast, isDraggable = true }) => {
   const isRunning = task.status === 'doing' && !task.is_paused;
 
-  // Se NÃO for arrastável (Lista de Espera ou Foco), renderiza direto
+  // Se NÃO for arrastável (Lista de Espera ou Foco), renderiza direto para evitar erro de Invariant
   if (!isDraggable) {
       return (
         <CardContent 
@@ -139,7 +139,7 @@ export default function EisenhowerMatrix() {
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [checklistInput, setChecklistInput] = useState('');
-  const [selectedTaskCategory, setSelectedTaskCategory] = useState(''); // Filtro visual
+  const [selectedTaskCategory, setSelectedTaskCategory] = useState('');
 
   const [newTask, setNewTask] = useState({ 
       title: '', 
@@ -162,7 +162,6 @@ export default function EisenhowerMatrix() {
   // --- BUSCA DE DADOS ---
   const fetchData = async () => {
     try {
-      // 1. Tarefas Ativas
       const { data: allActive, error: activeError } = await supabase
         .from('tasks')
         .select(`*, categories(name), clients(razao_social)`)
@@ -179,7 +178,6 @@ export default function EisenhowerMatrix() {
       setCurrentTask(q1 || null);
       setOtherTasks(others);
 
-      // 2. Tarefas Recentes
       const { data: recent } = await supabase
         .from('tasks')
         .select(`*, categories(name), clients(razao_social)`)
@@ -188,7 +186,6 @@ export default function EisenhowerMatrix() {
         .limit(10);
       setRecentTasks(recent || []);
 
-      // 3. Cadastros
       const { data: cats } = await supabase.from('categories').select('*'); 
       const { data: clis } = await supabase.from('clients').select('id, razao_social');
       const { data: tCats } = await supabase.from('task_categories').select('*'); 
@@ -360,12 +357,36 @@ export default function EisenhowerMatrix() {
 
       <div className="flex gap-6 flex-1 h-full min-h-0">
           
-          {/* COLUNA ESQUERDA: LISTA DE ESPERA & FOCO */}
+          {/* COLUNA ESQUERDA: FOCO & LISTA DE ESPERA */}
           <div className="w-1/3 flex flex-col gap-6 h-full">
               
-              {/* 1. LISTA DE ESPERA */}
-              <div className="flex-1 bg-surface/30 rounded-2xl border border-purple-500/30 flex flex-col overflow-hidden relative">
-                  <div className="p-3 bg-purple-500/10 border-b border-purple-500/20 flex justify-between items-center">
+              {/* 1. QUADRO FOCO (Fazer Agora) - NO TOPO */}
+              <div className="w-full bg-gradient-to-br from-brand-cyan/20 to-surface border border-brand-cyan/50 rounded-2xl flex flex-col shadow-[0_0_20px_rgba(8,145,178,0.2)] shrink-0">
+                  <div className="p-3 border-b border-brand-cyan/30 flex justify-between items-center">
+                      <h3 className="font-bold text-brand-cyan flex items-center gap-2">
+                          <Zap className="w-4 h-4 fill-brand-cyan" /> 1. Fazer Agora (Foco)
+                      </h3>
+                  </div>
+                  <div className="p-4 w-full">
+                      {currentTask ? (
+                          <TaskCard 
+                              task={currentTask} index={0} 
+                              isDraggable={false} 
+                              onDelete={handleDelete} 
+                              onStatusChange={handleStatusChange} 
+                              onTimerToggle={handleTimerToggle}
+                          />
+                      ) : (
+                          <div className="text-gray-500 text-sm italic text-center py-4 border border-dashed border-white/10 rounded-xl">
+                              {waitingList.length > 0 ? "Conclua a tarefa atual ou mova da lista de espera." : "Nada para fazer agora."}
+                          </div>
+                      )}
+                  </div>
+              </div>
+
+              {/* 2. LISTA DE ESPERA - ABAIXO (OCUPANDO O RESTO) */}
+              <div className="flex-1 bg-surface/30 rounded-2xl border border-purple-500/30 flex flex-col overflow-hidden relative min-h-0">
+                  <div className="p-3 bg-purple-500/10 border-b border-purple-500/20 flex justify-between items-center shrink-0">
                       <h3 className="font-bold text-purple-300 flex items-center gap-2">
                           <List className="w-4 h-4" /> Lista de Espera
                       </h3>
@@ -375,7 +396,7 @@ export default function EisenhowerMatrix() {
                       {waitingList.map((task, idx) => (
                           <TaskCard 
                               key={task.id} task={task} index={idx}
-                              isDraggable={false} // IMPORTANTE: Desativa DnD
+                              isDraggable={false} 
                               isWaitingList={true}
                               isFirst={idx === 0}
                               isLast={idx === waitingList.length - 1}
@@ -386,32 +407,6 @@ export default function EisenhowerMatrix() {
                       ))}
                       {waitingList.length === 0 && (
                           <div className="text-center text-gray-600 py-10 text-sm">Lista vazia.</div>
-                      )}
-                  </div>
-              </div>
-
-              {/* 2. QUADRO FOCO (Fazer Agora) - FIXO */}
-              <div className="h-48 bg-gradient-to-br from-brand-cyan/20 to-surface border border-brand-cyan/50 rounded-2xl flex flex-col shadow-[0_0_20px_rgba(8,145,178,0.2)]">
-                  <div className="p-3 border-b border-brand-cyan/30 flex justify-between items-center">
-                      <h3 className="font-bold text-brand-cyan flex items-center gap-2">
-                          <Zap className="w-4 h-4 fill-brand-cyan" /> 1. Fazer Agora (Foco)
-                      </h3>
-                  </div>
-                  <div className="flex-1 p-4 flex items-center justify-center">
-                      {currentTask ? (
-                          <div className="w-full">
-                              <TaskCard 
-                                  task={currentTask} index={0} 
-                                  isDraggable={false} // IMPORTANTE: Desativa DnD
-                                  onDelete={handleDelete} 
-                                  onStatusChange={handleStatusChange} 
-                                  onTimerToggle={handleTimerToggle}
-                              />
-                          </div>
-                      ) : (
-                          <div className="text-gray-500 text-sm italic text-center">
-                              {waitingList.length > 0 ? "Conclua a tarefa atual ou mova da lista de espera." : "Nada para fazer agora."}
-                          </div>
                       )}
                   </div>
               </div>
