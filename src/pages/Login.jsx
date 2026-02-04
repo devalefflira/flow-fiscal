@@ -1,96 +1,103 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw } from 'lucide-react'; 
+import { supabase } from '../supabaseClient';
+import { Lock, Mail, Loader2, ArrowRight } from 'lucide-react';
 
 export default function Login() {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    // Simulação de login
-    if (email && password) {
-      navigate('/home');
+    setLoading(true);
+    setErrorMsg('');
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) throw error;
+
+      navigate('/home'); // Redireciona ao sucesso
+    } catch (error) {
+      setErrorMsg('Falha ao entrar. Verifique suas credenciais.');
+      console.error(error);
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen relative flex flex-col items-center justify-center p-4 overflow-hidden">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4 font-sans relative overflow-hidden">
       
-      {/* --- VÍDEO DE BACKGROUND --- */}
+      {/* Background Decorativo */}
       <div className="absolute inset-0 z-0">
-        <video
-          autoPlay
-          loop
-          muted
-          playsInline
-          className="w-full h-full object-cover opacity-60" // Opacidade base do vídeo
-        >
-          <source src="/task-check.mp4" type="video/mp4" />
-        </video>
-        {/* Camada Escura (Overlay) para garantir leitura */}
-        <div className="absolute inset-0 bg-background/85 backdrop-blur-[2px]"></div>
+         <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-brand-cyan/20 via-background to-background"></div>
       </div>
 
-      {/* --- CONTEÚDO (Z-INDEX ALTO) --- */}
-      <div className="relative z-10 w-full max-w-sm flex flex-col items-center">
-        
-        {/* Logo Badge */}
-        <div className="mb-12 flex flex-col items-center animate-fade-in-down">
-          <div className="bg-brand-cyan/90 backdrop-blur-md px-8 py-3 rounded-full shadow-[0_0_30px_rgba(8,145,178,0.4)] flex items-center gap-3 transform hover:scale-105 transition-transform duration-300 border border-white/10">
-            <RefreshCw className="w-8 h-8 text-white animate-spin-slow" strokeWidth={2.5} />
-            <span className="text-2xl font-bold text-white tracking-tight">
-              Flow Fiscal
-            </span>
+      <div className="bg-surface border border-white/10 p-8 rounded-2xl shadow-2xl w-full max-w-md relative z-10 animate-fade-in">
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 bg-brand-cyan/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-brand-cyan/20">
+            <Lock className="w-8 h-8 text-brand-cyan" />
           </div>
+          <h1 className="text-2xl font-bold text-white">Flow Fiscal</h1>
+          <p className="text-gray-500 text-sm mt-1">Acesse sua conta para continuar</p>
         </div>
 
-        {/* Card de Login */}
-        <div className="w-full bg-surface/80 backdrop-blur-md rounded-2xl p-8 shadow-2xl border border-white/10">
-          <form onSubmit={handleLogin} className="flex flex-col gap-6">
-            
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-gray-400 ml-1">
-                E-mail
-              </label>
-              <input
-                type="email"
+        <form onSubmit={handleLogin} className="space-y-4">
+          <div>
+            <label className="text-xs font-bold text-gray-400 uppercase ml-1">E-mail</label>
+            <div className="flex items-center gap-3 bg-black/20 border border-white/10 rounded-xl p-3 mt-1 focus-within:border-brand-cyan transition-colors">
+              <Mail className="w-5 h-5 text-gray-500" />
+              <input 
+                type="email" 
+                required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="bg-input/50 text-gray-100 p-4 rounded-xl border border-white/5 focus:border-brand-cyan outline-none transition-all placeholder-gray-600 focus:bg-input"
-                placeholder="exemplo@flowfiscal.com"
+                placeholder="seu@email.com"
+                className="bg-transparent text-white outline-none w-full text-sm placeholder-gray-600"
               />
             </div>
+          </div>
 
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-gray-400 ml-1">
-                Senha
-              </label>
-              <input
-                type="password"
+          <div>
+            <label className="text-xs font-bold text-gray-400 uppercase ml-1">Senha</label>
+            <div className="flex items-center gap-3 bg-black/20 border border-white/10 rounded-xl p-3 mt-1 focus-within:border-brand-cyan transition-colors">
+              <Lock className="w-5 h-5 text-gray-500" />
+              <input 
+                type="password" 
+                required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="bg-input/50 text-gray-100 p-4 rounded-xl border border-white/5 focus:border-brand-cyan outline-none transition-all placeholder-gray-600 focus:bg-input"
                 placeholder="••••••••"
+                className="bg-transparent text-white outline-none w-full text-sm placeholder-gray-600"
               />
             </div>
+          </div>
 
-            <button
-              type="submit"
-              className="mt-4 bg-primary hover:bg-primary-hover text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-500/20 transition-all hover:shadow-blue-500/40 active:scale-95 border border-white/5"
-            >
-              Entrar
-            </button>
+          {errorMsg && (
+            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs text-center font-bold">
+              {errorMsg}
+            </div>
+          )}
 
-          </form>
+          <button 
+            type="submit" 
+            disabled={loading}
+            className="w-full bg-brand-cyan hover:bg-cyan-600 text-white font-bold py-3 rounded-xl transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <>Entrar <ArrowRight className="w-4 h-4" /></>}
+          </button>
+        </form>
+
+        <div className="mt-6 text-center">
+            <p className="text-xs text-gray-600">Não tem acesso? Contate o administrador.</p>
         </div>
-        
-        {/* Rodapé discreto */}
-        <p className="mt-8 text-sm text-gray-500 font-medium">
-          Gerencie seus processos com fluidez.
-        </p>
-
       </div>
     </div>
   );

@@ -6,17 +6,24 @@ import {
   Infinity as InfinityIcon, 
   LayoutGrid, 
   Folder, 
-  LogOut 
+  LogOut,
+  ChevronDown // Adicionado para indicar expansão
 } from 'lucide-react';
 
 export default function Home() {
   const navigate = useNavigate();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [activeCategory, setActiveCategory] = useState(null); // Controla qual menu está expandido
   
   // Estados para o efeito de digitação
   const [displayedText, setDisplayedText] = useState('');
   const fullText = "O que vamos fazer agora?"; 
-  const toggleMenu = () => setIsMenuOpen(!isMenuOpen);
+  
+  const toggleMenu = () => {
+    const newState = !isMenuOpen;
+    setIsMenuOpen(newState);
+    if (!newState) setActiveCategory(null); // Fecha submenus se o menu principal fechar
+  };
 
   // Efeito de Máquina de Escrever
   useEffect(() => {
@@ -36,13 +43,27 @@ export default function Home() {
   }, [isMenuOpen]);
 
   // Componente de Item do Menu
-  const MenuItem = ({ icon: Icon, title, items, side, vertical, onTitleClick, delayClass }) => {
+  const MenuItem = ({ icon: Icon, title, items, side, vertical, delayClass }) => {
     const isLeft = side === 'left';
     const isTop = vertical === 'top';
+    
+    // Identifica se este menu específico está aberto
+    const isOpen = activeCategory === title;
+
+    // Função para alternar este menu
+    const handleToggle = (e) => {
+      e.stopPropagation();
+      // Se já estiver aberto, fecha (null). Se não, abre este (title).
+      setActiveCategory(isOpen ? null : title);
+    };
+
+    // Estilização de Posição
     const containerAlignment = isLeft ? 'items-start' : 'items-end';
     const textAlign = isLeft ? 'text-left' : 'text-right';
     const headerDirection = isLeft ? 'flex-row' : 'flex-row-reverse';
     const borderSide = isLeft ? 'border-l-2 pl-3' : 'border-r-2 pr-3';
+    
+    // Transições de entrada do Menu Principal
     const translateX = isLeft ? '-translate-x-[16rem]' : 'translate-x-[16rem]';
     const translateY = isTop ? '-translate-y-[9rem]' : 'translate-y-[9rem]';
 
@@ -59,33 +80,60 @@ export default function Home() {
       >
         <div className={`flex flex-col group cursor-default ${containerAlignment}`}>
           
-          {/* Título/Ícone (Clique Geral) */}
-          <div 
-            onClick={onTitleClick}
-            className={`flex items-center gap-3 mb-2 ${headerDirection} cursor-pointer`}
+          {/* --- TÍTULO/ÍCONE (Botão de Expandir) --- */}
+          <button 
+            onClick={handleToggle}
+            className={`flex items-center gap-3 mb-2 ${headerDirection} group/btn outline-none`}
           >
-            <Icon className="w-7 h-7 text-gray-100 group-hover:text-brand-cyan transition-colors shadow-lg" />
-            <h2 className="text-xl font-bold text-white group-hover:text-brand-cyan transition-colors uppercase tracking-wide drop-shadow-md">
-              {title}
-            </h2>
-          </div>
+            {/* Ícone Principal com Animação */}
+            <div className={`
+                transition-all duration-500 ease-in-out
+                ${isOpen ? 'rotate-12 scale-110 text-brand-cyan drop-shadow-[0_0_8px_rgba(8,145,178,0.5)]' : 'text-gray-100 rotate-0 scale-100'}
+            `}>
+                <Icon className="w-7 h-7" />
+            </div>
+
+            <div className={`flex items-center gap-2 ${headerDirection}`}>
+                <h2 className={`
+                    text-xl font-bold uppercase tracking-wide drop-shadow-md transition-colors duration-300
+                    ${isOpen ? 'text-brand-cyan' : 'text-white group-hover/btn:text-brand-cyan'}
+                `}>
+                {title}
+                </h2>
+                
+                {/* Seta indicativa (Pequena animação extra) */}
+                <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform duration-500 ${isOpen ? 'rotate-180 text-brand-cyan' : 'rotate-0'}`} />
+            </div>
+          </button>
           
-          {/* Lista de Subitens (Links Específicos) */}
-          <ul className={`space-y-1 ${textAlign} ${borderSide} border-white/30 w-full`}>
-            {items.map((item, idx) => (
-              <li 
-                key={idx} 
-                onClick={(e) => {
-                  e.stopPropagation(); // Impede que o clique suba para o título
-                  if (item.path) navigate(item.path);
-                  else console.log('Rota não definida para:', item.label);
-                }}
-                className="text-gray-300 text-sm hover:text-white transition-colors font-medium drop-shadow-sm cursor-pointer hover:underline"
-              >
-                {item.label}
-              </li>
-            ))}
-          </ul>
+          {/* --- SUBMENUS (Lista com Animação de Altura) --- */}
+          <div 
+            className={`
+                grid transition-all duration-500 ease-in-out w-full
+                ${isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}
+            `}
+          >
+            <div className="overflow-hidden">
+                <ul className={`space-y-2 py-2 ${textAlign} ${borderSide} border-white/30`}>
+                    {items.map((item, idx) => (
+                    <li 
+                        key={idx} 
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (item.path) navigate(item.path);
+                        }}
+                        className="
+                            text-gray-400 text-sm font-medium drop-shadow-sm cursor-pointer 
+                            hover:text-white hover:translate-x-1 transition-all duration-200 block
+                        "
+                    >
+                        {item.label}
+                    </li>
+                    ))}
+                </ul>
+            </div>
+          </div>
+
         </div>
       </div>
     );
@@ -138,10 +186,9 @@ export default function Home() {
       {/* 1. TAREFAS */}
       <MenuItem 
         side="left" vertical="top" icon={CheckSquare} title="Tarefas"
-        onTitleClick={() => navigate('/tarefas/matriz')} // Atualizado para ir direto pra Matriz
         items={[
-          { label: 'Matriz de Eisenhower', path: '/tarefas/matriz' }
-          // Removido "Adicionar Tarefas"
+          { label: 'Matriz de Eisenhower', path: '/tarefas/matriz' },
+          { label: 'Kanban / Dashboard', path: '/dashboard/tarefas' } // Adicionei um link útil aqui
         ]}
         delayClass="delay-0"
       />
@@ -149,12 +196,11 @@ export default function Home() {
       {/* 2. PROCESSOS */}
       <MenuItem 
         side="right" vertical="top" icon={InfinityIcon} title="Processos"
-        onTitleClick={() => navigate('/processos/fechamento')}
         items={[
           { label: 'Fechamento Fiscal', path: '/processos/fechamento' },
           { label: 'Obrigações Acessórias', path: '/processos/obrigacoes' },
           { label: 'Controle de Parcelamentos', path: '/processos/parcelamentos' },
-          { label: 'Relatórios', path: '/processos/relatorios' } // <-- NOVO ITEM
+          { label: 'Relatórios', path: '/processos/relatorios' }
         ]}
         delayClass="delay-[50ms]"
       />
@@ -162,7 +208,6 @@ export default function Home() {
       {/* 3. DASHBOARD */}
       <MenuItem 
         side="left" vertical="bottom" icon={LayoutGrid} title="Dashboard"
-        onTitleClick={() => navigate('/dashboard/tarefas')}
         items={[
           { label: 'Visão Tarefa/Foco', path: '/dashboard/tarefas' },
           { label: 'Visão Fiscal', path: '/dashboard/fiscal' }
@@ -173,10 +218,9 @@ export default function Home() {
       {/* 4. CADASTROS */}
       <MenuItem 
         side="right" vertical="bottom" icon={Folder} title="Cadastros"
-        onTitleClick={() => console.log('Ir para Cadastros')}
         items={[
-          { label: 'Categorias de Tarefas', path: '/cadastros/categorias-tarefas' }, // Novo Link
-          { label: 'Origem', path: '/cadastros/categorias' }, // Renomeado de Categorias para Origem
+          { label: 'Categorias de Tarefas', path: '/cadastros/categorias-tarefas' },
+          { label: 'Origem', path: '/cadastros/categorias' },
           { label: 'Clientes', path: '/cadastros/clientes' },
           { label: 'Guias de Tributos', path: '/cadastros/guias' },
           { label: 'Equipe', path: '/cadastros/usuarios' },
