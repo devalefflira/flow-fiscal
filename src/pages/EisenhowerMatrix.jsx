@@ -1,18 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { useNavigate } from 'react-router-dom';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { 
   Trash2, Plus, Play, Pause, CheckCircle, 
   ChevronLeft, ArrowUp, ArrowDown, List, Zap, 
-  ToggleLeft, ToggleRight, Calendar, X, AlignLeft
+  ToggleLeft, ToggleRight, Calendar, X, AlignLeft, Search
 } from 'lucide-react';
 import { format, intervalToDuration, formatDuration } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 // --- COMPONENTES AUXILIARES ---
 
-// 1. Conteúdo Visual do Card (Sem lógica de Drag and Drop)
 const CardContent = ({ task, isRunning, isWaitingList, onMoveUp, onMoveDown, isFirst, isLast, onDelete, onTimerToggle, onStatusChange }) => {
     return (
         <div className={`bg-surface p-4 rounded-xl mb-3 border shadow-sm group hover:border-brand-cyan/50 transition-all relative w-full
@@ -24,7 +23,6 @@ const CardContent = ({ task, isRunning, isWaitingList, onMoveUp, onMoveDown, isF
                     {task.categories?.name || 'Geral'}
                 </span>
                 
-                {/* Ações da Lista de Espera */}
                 {isWaitingList && (
                     <div className="flex gap-1">
                         <button 
@@ -63,7 +61,6 @@ const CardContent = ({ task, isRunning, isWaitingList, onMoveUp, onMoveDown, isF
                     </span>
                 </div>
 
-                {/* Controles apenas se não for Lista de Espera */}
                 {!isWaitingList && (
                     <div className="flex items-center gap-2">
                         {task.status !== 'done' && (
@@ -89,11 +86,9 @@ const CardContent = ({ task, isRunning, isWaitingList, onMoveUp, onMoveDown, isF
     );
 };
 
-// 2. Wrapper Inteligente (Decide se é Draggable ou não)
 const TaskCard = ({ task, index, onDelete, onStatusChange, onTimerToggle, isWaitingList, onMoveUp, onMoveDown, isFirst, isLast, isDraggable = true }) => {
   const isRunning = task.status === 'doing' && !task.is_paused;
 
-  // Se NÃO for arrastável (Lista de Espera ou Foco), renderiza direto para evitar erro de Invariant
   if (!isDraggable) {
       return (
         <CardContent 
@@ -104,7 +99,6 @@ const TaskCard = ({ task, index, onDelete, onStatusChange, onTimerToggle, isWait
       );
   }
 
-  // Se for arrastável (Quadrantes 2, 3, 4), usa o Draggable
   return (
     <Draggable draggableId={task.id.toString()} index={index}>
       {(provided, snapshot) => (
@@ -140,6 +134,10 @@ export default function EisenhowerMatrix() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [checklistInput, setChecklistInput] = useState('');
   const [selectedTaskCategory, setSelectedTaskCategory] = useState('');
+
+  // Estados para o campo de Busca de Cliente
+  const [clientSearch, setClientSearch] = useState('');
+  const [showClientList, setShowClientList] = useState(false);
 
   const [newTask, setNewTask] = useState({ 
       title: '', 
@@ -187,7 +185,13 @@ export default function EisenhowerMatrix() {
       setRecentTasks(recent || []);
 
       const { data: cats } = await supabase.from('categories').select('*'); 
-      const { data: clis } = await supabase.from('clients').select('id, razao_social');
+      
+      // 1. ORDENAÇÃO DE CLIENTES NA BUSCA
+      const { data: clis } = await supabase
+        .from('clients')
+        .select('id, razao_social')
+        .order('razao_social', { ascending: true }); // Ordena alfabeticamente
+        
       const { data: tCats } = await supabase.from('task_categories').select('*'); 
 
       setCategories(cats || []);
@@ -254,6 +258,7 @@ export default function EisenhowerMatrix() {
     if (!error) {
         fetchData();
         setIsModalOpen(false);
+        // Reset dos campos, incluindo busca de cliente
         setNewTask({ 
             title: '', category_id: '', client_id: '', origin_id: '', 
             priority: 'Media', quadrant: 'not_urgent_important', 
@@ -261,6 +266,7 @@ export default function EisenhowerMatrix() {
         });
         setSelectedTaskCategory('');
         setChecklistInput('');
+        setClientSearch(''); // Reseta busca visual
     }
   };
 
@@ -331,6 +337,17 @@ export default function EisenhowerMatrix() {
   const removeChecklistItem = (idx) => {
       setNewTask(prev => ({ ...prev, checklist: prev.checklist.filter((_, i) => i !== idx) }));
   };
+
+  // Funções para a Busca de Cliente
+  const handleClientSelect = (client) => {
+      setNewTask(prev => ({ ...prev, client_id: client.id }));
+      setClientSearch(client.razao_social);
+      setShowClientList(false);
+  };
+
+  const filteredClients = clients.filter(c => 
+      c.razao_social.toLowerCase().includes(clientSearch.toLowerCase())
+  );
 
   return (
     <div className="min-h-screen bg-background p-8 font-sans flex flex-col overflow-hidden">
@@ -506,7 +523,7 @@ export default function EisenhowerMatrix() {
                   
                   <form onSubmit={handleCreateTask} className="space-y-4">
                       
-                      {/* LINHA 1: Categoria e Título Padrão (AGRUPADO) */}
+                      {/* LINHA 1: Categoria e Título Padrão */}
                       <div className="grid grid-cols-2 gap-4">
                           <div>
                               <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Categoria da Tarefa</label>
@@ -543,19 +560,63 @@ export default function EisenhowerMatrix() {
                           </div>
                       </div>
 
-                      {/* LINHA 2: Cliente e Origem */}
+                      {/* LINHA 2: Cliente (BUSCA) e Origem */}
                       <div className="grid grid-cols-2 gap-4">
-                          <div>
+                          
+                          {/* CAMPO CLIENTE COM BUSCA */}
+                          <div className="relative">
                               <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Cliente</label>
-                              <select 
-                                  className="w-full bg-black/20 border border-white/10 rounded-lg p-3 text-white text-sm outline-none"
-                                  value={newTask.client_id}
-                                  onChange={e => setNewTask({...newTask, client_id: e.target.value})}
-                              >
-                                  <option value="">Geral (Sem cliente)</option>
-                                  {clients.map(c => <option key={c.id} value={c.id} className="bg-surface">{c.razao_social}</option>)}
-                              </select>
+                              <div className="relative">
+                                  <Search className="w-4 h-4 text-gray-500 absolute left-3 top-3.5 pointer-events-none" />
+                                  <input 
+                                      type="text"
+                                      placeholder="Buscar cliente..."
+                                      className="w-full bg-black/20 border border-white/10 rounded-lg pl-10 pr-3 py-3 text-white text-sm outline-none focus:border-brand-cyan"
+                                      value={clientSearch}
+                                      onChange={(e) => {
+                                          setClientSearch(e.target.value);
+                                          setShowClientList(true);
+                                          if(e.target.value === '') setNewTask(prev => ({...prev, client_id: ''}));
+                                      }}
+                                      onFocus={() => setShowClientList(true)}
+                                  />
+                                  
+                                  {/* LISTA FLUTUANTE DE CLIENTES */}
+                                  {showClientList && (
+                                      <>
+                                          {/* Backdrop Transparente para fechar ao clicar fora */}
+                                          <div className="fixed inset-0 z-10" onClick={() => setShowClientList(false)}></div>
+                                          
+                                          <div className="absolute top-full left-0 w-full bg-[#1e293b] border border-white/10 rounded-lg max-h-48 overflow-y-auto z-20 mt-1 shadow-xl custom-scrollbar">
+                                              
+                                              {/* Opção Geral */}
+                                              <div 
+                                                  className="p-3 hover:bg-white/5 cursor-pointer text-sm text-gray-300 border-b border-white/5"
+                                                  onClick={() => handleClientSelect({ id: '', razao_social: 'Geral (Sem cliente)' })}
+                                              >
+                                                  Geral (Sem cliente)
+                                              </div>
+
+                                              {/* Lista Filtrada */}
+                                              {filteredClients.map(client => (
+                                                  <div 
+                                                      key={client.id}
+                                                      className="p-3 hover:bg-brand-cyan/20 hover:text-brand-cyan cursor-pointer text-sm text-white border-b border-white/5 last:border-0 transition-colors"
+                                                      onClick={() => handleClientSelect(client)}
+                                                  >
+                                                      {client.razao_social}
+                                                  </div>
+                                              ))}
+
+                                              {filteredClients.length === 0 && (
+                                                  <div className="p-3 text-xs text-gray-500 text-center">Nenhum cliente encontrado</div>
+                                              )}
+                                          </div>
+                                      </>
+                                  )}
+                              </div>
                           </div>
+
                           <div>
                               <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Origem</label>
                               <select 
