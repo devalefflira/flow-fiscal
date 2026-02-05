@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   ChevronLeft, Calendar, RefreshCw, Server, BoxSelect, AlertTriangle, Send, 
   ArrowRight, ArrowLeft, RotateCcw, XCircle, PauseCircle, 
-  List, Columns, AlertCircle, CheckCircle, Search, Save // <--- ADICIONEI CheckCircle AQUI
+  List, Columns, AlertCircle, CheckCircle, Search, Save, Play
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -21,7 +21,7 @@ export default function FiscalClosing() {
   const [allData, setAllData] = useState([]); // Dados brutos para a lista
   const [columns, setColumns] = useState({}); // Dados processados para o Kanban
 
-  // --- FILTROS DA LISTA ---
+  // --- FILTROS ---
   const [listFilters, setListFilters] = useState({
       client: '',
       regime: '',
@@ -29,6 +29,9 @@ export default function FiscalClosing() {
       importType: '',
       finishDate: ''
   });
+
+  // NOVO: Busca específica da coluna Pendente
+  const [pendingSearch, setPendingSearch] = useState('');
 
   // Estado de Seleção do Card (Kanban)
   const [selectedCardId, setSelectedCardId] = useState(null);
@@ -44,9 +47,11 @@ export default function FiscalClosing() {
   const columnOrder = ['pending', 'docs_received', 'analysis', 'taxes_generated', 'done'];
 
   // --- MODAIS DE PROCESSO ---
+  const [modalStartConfirmationOpen, setModalStartConfirmationOpen] = useState(false); // NOVO
   const [modalImportOpen, setModalImportOpen] = useState(false);
   const [modalApurationOpen, setModalApurationOpen] = useState(false);
   const [modalClosingOpen, setModalClosingOpen] = useState(false);
+  
   const [apurationData, setApurationData] = useState({ entradas: false, saidas: false });
   const [importError, setImportError] = useState('');
   const [showManualInput, setShowManualInput] = useState(false);
@@ -75,7 +80,6 @@ export default function FiscalClosing() {
     const compDate = `${selectedCompetence}-01`;
 
     try {
-      // Adicionado cnpj na query
       const { data, error } = await supabase
         .from('fiscal_closings')
         .select(`*, clients(id, razao_social, regime, cnpj)`)
@@ -145,10 +149,13 @@ export default function FiscalClosing() {
 
     // Gatilhos de Avanço
     if (direction === 'next') {
+      
+      // ALTERAÇÃO AQUI: De Pendente para Importação -> Abre Modal
       if (task.status === 'pending' && nextStatus === 'docs_received') {
-        await executeUpdate(task, nextStatus, { started_at: new Date().toISOString() });
+        setModalStartConfirmationOpen(true);
         return;
       }
+
       if (task.status === 'docs_received' && nextStatus === 'analysis') {
         setImportError(''); setShowManualInput(false); setModalImportOpen(true);
         return;
@@ -213,7 +220,6 @@ export default function FiscalClosing() {
           
           if (error) throw error;
           
-          // Atualiza localmente
           setAllData(prev => prev.map(i => i.id === id ? { ...i, import_adjustment_details: text } : i));
       } catch (err) {
           alert('Erro ao salvar ajuste');
@@ -221,6 +227,13 @@ export default function FiscalClosing() {
   };
 
   // --- CONFIRMAÇÕES DE MODAIS ---
+  
+  // NOVO: Confirmar Início
+  const confirmStart = () => {
+      executeUpdate(activeTask, 'docs_received', { started_at: new Date().toISOString() });
+      setModalStartConfirmationOpen(false);
+  };
+
   const confirmImport = (type) => { 
     if (type === 'Manual' && !importError) return alert("Selecione o erro.");
     const extraData = { 
@@ -243,7 +256,6 @@ export default function FiscalClosing() {
     setModalClosingOpen(false);
   };
 
-  // Funções de reverse simplificadas
   const confirmReverseClosing = () => { executeUpdate(activeTask, 'taxes_generated', { completed_at: null }); setModalReverseClosingOpen(false); };
   const confirmReverseGuides = () => { 
       const d = { ...(activeTask.movement_data || {}) }; delete d.entradas; delete d.saidas;
@@ -334,63 +346,97 @@ export default function FiscalClosing() {
             <div className="flex h-full gap-6 min-w-[1400px] overflow-x-auto pb-4">
                 {Object.entries(columns).map(([colKey, col]) => (
                 <div key={colKey} className="flex-1 flex flex-col min-w-[280px]">
-                    <div className={`flex items-center gap-2 mb-4 px-2 pb-2 border-b-2 ${colKey === 'done' ? 'border-emerald-500' : 'border-white/10'}`}>
-                        <div className={`w-3 h-3 rounded-full ${col.color}`}></div>
-                        <span className="font-bold text-gray-300">{col.title}</span>
-                        <span className="ml-auto text-xs bg-white/10 px-2 py-0.5 rounded text-gray-400">{col.items.length}</span>
+                    
+                    {/* Header da Coluna */}
+                    <div className={`flex flex-col gap-2 mb-4 px-2 pb-2 border-b-2 ${colKey === 'done' ? 'border-emerald-500' : 'border-white/10'}`}>
+                        <div className="flex items-center gap-2">
+                            <div className={`w-3 h-3 rounded-full ${col.color}`}></div>
+                            <span className="font-bold text-gray-300">{col.title}</span>
+                            <span className="ml-auto text-xs bg-white/10 px-2 py-0.5 rounded text-gray-400">{col.items.length}</span>
+                        </div>
+                        
+                        {/* NOVO: Campo de Busca na Coluna Pendente */}
+                        {colKey === 'pending' && (
+                            <div className="mt-1">
+                                <div className="flex items-center bg-black/20 rounded-lg px-2 py-1.5 border border-white/5 focus-within:border-white/20 transition-colors">
+                                    <Search className="w-3 h-3 text-gray-500 mr-2" />
+                                    <input 
+                                        type="text"
+                                        placeholder="Buscar pendente..."
+                                        value={pendingSearch}
+                                        onChange={(e) => setPendingSearch(e.target.value)}
+                                        className="bg-transparent text-xs text-white outline-none w-full placeholder-gray-600"
+                                    />
+                                    {pendingSearch && (
+                                        <button onClick={() => setPendingSearch('')} className="text-gray-500 hover:text-white">
+                                            <XCircle className="w-3 h-3" />
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <div className="flex-1 rounded-2xl p-2 bg-surface/20 border border-white/5 overflow-y-auto custom-scrollbar">
-                    {col.items.map((item) => {
-                        const isSelected = selectedCardId === item.id;
-                        return (
-                        <div
-                            key={item.id}
-                            onClick={() => setSelectedCardId(isSelected ? null : item.id)}
-                            className={`relative bg-surface p-4 rounded-xl mb-3 border transition-all cursor-pointer
-                            ${isSelected ? 'border-brand-cyan ring-1 ring-brand-cyan/50 shadow-lg scale-[1.02] z-10' : 'border-white/5 hover:border-white/20'}
-                            `}
-                        >
-                            <div className="flex justify-between items-start mb-2">
-                                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider bg-black/20 px-1.5 py-0.5 rounded">
-                                    {item.clients?.regime || 'Indefinido'}
-                                </span>
-                                {item.movement_data && (
-                                    <div className="flex gap-1">
-                                        {item.movement_data.import_type && (
-                                            <span className={`text-[9px] px-1 rounded ${item.movement_data.import_type === 'Manual' ? 'bg-red-500/20 text-red-300' : 'bg-blue-500/20 text-blue-300'}`}>
-                                                {item.movement_data.import_type === 'Automática' ? 'AUTO' : 'MAN'}
-                                            </span>
-                                        )}
+                    {col.items
+                        .filter(item => {
+                            // Aplica filtro apenas se for a coluna pendente e houver busca
+                            if (colKey === 'pending' && pendingSearch) {
+                                return item.clients?.razao_social?.toLowerCase().includes(pendingSearch.toLowerCase());
+                            }
+                            return true;
+                        })
+                        .map((item) => {
+                            const isSelected = selectedCardId === item.id;
+                            return (
+                            <div
+                                key={item.id}
+                                onClick={() => setSelectedCardId(isSelected ? null : item.id)}
+                                className={`relative bg-surface p-4 rounded-xl mb-3 border transition-all cursor-pointer
+                                ${isSelected ? 'border-brand-cyan ring-1 ring-brand-cyan/50 shadow-lg scale-[1.02] z-10' : 'border-white/5 hover:border-white/20'}
+                                `}
+                            >
+                                <div className="flex justify-between items-start mb-2">
+                                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider bg-black/20 px-1.5 py-0.5 rounded">
+                                        {item.clients?.regime || 'Indefinido'}
+                                    </span>
+                                    {item.movement_data && (
+                                        <div className="flex gap-1">
+                                            {item.movement_data.import_type && (
+                                                <span className={`text-[9px] px-1 rounded ${item.movement_data.import_type === 'Manual' ? 'bg-red-500/20 text-red-300' : 'bg-blue-500/20 text-blue-300'}`}>
+                                                    {item.movement_data.import_type === 'Automática' ? 'AUTO' : 'MAN'}
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                                
+                                <h3 className="text-white font-bold text-sm leading-snug mb-3">{item.clients?.razao_social}</h3>
+
+                                {/* Detalhes Kanban */}
+                                {colKey === 'done' && item.completed_at && (
+                                    <p className="text-[10px] text-emerald-400 mt-2 border-t border-white/10 pt-2 flex justify-between">
+                                        <span>Concluído:</span>
+                                        <span>{format(new Date(item.completed_at), 'dd/MM HH:mm')}</span>
+                                    </p>
+                                )}
+
+                                {/* Ações Kanban */}
+                                {isSelected && (
+                                    <div className="absolute inset-0 bg-black/60 backdrop-blur-[1px] rounded-xl flex items-center justify-between px-2 animate-fade-in" onClick={(e) => e.stopPropagation()}>
+                                        {colKey !== 'pending' ? (
+                                            <button onClick={() => handleMove(item, 'prev')} className="p-2 bg-red-500/20 hover:bg-red-500 rounded-full text-white border border-red-500/50"><ArrowLeft className="w-5 h-5" /></button>
+                                        ) : <div />}
+                                        <button onClick={() => setSelectedCardId(null)} className="text-xs text-gray-400 hover:text-white mt-12">Fechar</button>
+                                        {colKey !== 'done' ? (
+                                            <button onClick={() => handleMove(item, 'next')} className="p-2 bg-brand-cyan hover:bg-cyan-600 rounded-full text-white shadow-lg"><ArrowRight className="w-5 h-5" /></button>
+                                        ) : <div />}
                                     </div>
                                 )}
                             </div>
-                            
-                            <h3 className="text-white font-bold text-sm leading-snug mb-3">{item.clients?.razao_social}</h3>
-
-                            {/* Detalhes Kanban */}
-                            {colKey === 'done' && item.completed_at && (
-                                <p className="text-[10px] text-emerald-400 mt-2 border-t border-white/10 pt-2 flex justify-between">
-                                    <span>Concluído:</span>
-                                    <span>{format(new Date(item.completed_at), 'dd/MM HH:mm')}</span>
-                                </p>
-                            )}
-
-                            {/* Ações Kanban */}
-                            {isSelected && (
-                                <div className="absolute inset-0 bg-black/60 backdrop-blur-[1px] rounded-xl flex items-center justify-between px-2 animate-fade-in" onClick={(e) => e.stopPropagation()}>
-                                    {colKey !== 'pending' ? (
-                                        <button onClick={() => handleMove(item, 'prev')} className="p-2 bg-red-500/20 hover:bg-red-500 rounded-full text-white border border-red-500/50"><ArrowLeft className="w-5 h-5" /></button>
-                                    ) : <div />}
-                                    <button onClick={() => setSelectedCardId(null)} className="text-xs text-gray-400 hover:text-white mt-12">Fechar</button>
-                                    {colKey !== 'done' ? (
-                                        <button onClick={() => handleMove(item, 'next')} className="p-2 bg-brand-cyan hover:bg-cyan-600 rounded-full text-white shadow-lg"><ArrowRight className="w-5 h-5" /></button>
-                                    ) : <div />}
-                                </div>
-                            )}
-                        </div>
-                        );
-                    })}
+                            );
+                        })
+                    }
                     </div>
                 </div>
                 ))}
@@ -412,6 +458,7 @@ export default function FiscalClosing() {
                             onChange={e => setListFilters({...listFilters, client: e.target.value})}
                         />
                     </div>
+                    {/* ... (outros filtros mantidos) ... */}
                     <select 
                         className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white text-sm outline-none"
                         value={listFilters.regime}
@@ -500,7 +547,28 @@ export default function FiscalClosing() {
         )}
       </div>
 
-      {/* --- MODAL DE ERROS DE IMPORTAÇÃO (LISTA) --- */}
+      {/* --- MODAIS --- */}
+      
+      {/* NOVO: Modal Confirmação de Início */}
+      {modalStartConfirmationOpen && activeTask && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-fade-in">
+           <div className="bg-surface rounded-2xl w-full max-w-sm border border-white/10 p-6">
+              <div className="w-12 h-12 rounded-full bg-blue-500/20 flex items-center justify-center mb-4 mx-auto">
+                 <Play className="w-6 h-6 text-blue-400 ml-1" />
+              </div>
+              <h2 className="text-lg font-bold text-white mb-2 text-center">Iniciar Fechamento?</h2>
+              <p className="text-gray-400 text-sm text-center mb-6">
+                 Deseja iniciar o processo de fechamento para <strong>{activeTask.clients?.razao_social}</strong>?
+              </p>
+              <div className="flex gap-3">
+                  <button onClick={() => setModalStartConfirmationOpen(false)} className="flex-1 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-gray-300 font-bold text-sm">Cancelar</button>
+                  <button onClick={confirmStart} className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold text-sm">Iniciar</button>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {/* Modal Erros Lista (Mantido) */}
       {modalErrorsListOpen && (
           <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-fade-in">
               <div className="bg-surface rounded-2xl w-full max-w-4xl border border-white/10 p-6 flex flex-col h-[80vh]">
@@ -553,8 +621,7 @@ export default function FiscalClosing() {
           </div>
       )}
 
-      {/* --- MODAIS DE PROCESSO (Mantidos) --- */}
-      {/* Modal Importação */}
+      {/* Modal Importação (Mantido) */}
       {modalImportOpen && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
           <div className="bg-surface rounded-2xl w-full max-w-sm border border-white/10 p-6">
@@ -580,7 +647,7 @@ export default function FiscalClosing() {
         </div>
       )}
 
-      {/* Modal Apuração */}
+      {/* Modal Apuração (Mantido) */}
       {modalApurationOpen && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
           <div className="bg-surface rounded-2xl w-full max-w-sm border border-white/10 p-6">
@@ -601,7 +668,7 @@ export default function FiscalClosing() {
         </div>
       )}
 
-      {/* Modal Fechamento */}
+      {/* Modal Fechamento (Mantido) */}
       {modalClosingOpen && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
            <div className="bg-surface rounded-2xl w-full max-w-sm border border-white/10 p-6 relative">
@@ -616,7 +683,7 @@ export default function FiscalClosing() {
         </div>
       )}
 
-      {/* Modais Reverse (Simplificados para economizar espaço visual no código, mas funcionais) */}
+      {/* Modais Reverse (Mantidos) */}
       {modalReverseClosingOpen && <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"><div className="bg-surface rounded-2xl p-6 w-full max-w-sm"><h2 className="text-white font-bold mb-4">Cancelar Fechamento?</h2><div className="flex gap-3"><button onClick={() => setModalReverseClosingOpen(false)} className="flex-1 bg-white/10 py-2 rounded text-white">Não</button><button onClick={confirmReverseClosing} className="flex-1 bg-red-600 py-2 rounded text-white font-bold">Sim</button></div></div></div>}
       {modalReverseGuidesOpen && <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"><div className="bg-surface rounded-2xl p-6 w-full max-w-sm"><h2 className="text-white font-bold mb-4">Reapurar?</h2><div className="flex gap-3"><button onClick={() => setModalReverseGuidesOpen(false)} className="flex-1 bg-white/10 py-2 rounded text-white">Não</button><button onClick={confirmReverseGuides} className="flex-1 bg-yellow-600 py-2 rounded text-white font-bold">Sim</button></div></div></div>}
       {modalReverseAnalysisOpen && <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"><div className="bg-surface rounded-2xl p-6 w-full max-w-sm"><h2 className="text-white font-bold mb-4">Refazer Conferência?</h2><div className="flex gap-3"><button onClick={() => setModalReverseAnalysisOpen(false)} className="flex-1 bg-white/10 py-2 rounded text-white">Não</button><button onClick={confirmReverseAnalysis} className="flex-1 bg-blue-600 py-2 rounded text-white font-bold">Sim</button></div></div></div>}
