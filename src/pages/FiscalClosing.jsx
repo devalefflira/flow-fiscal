@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 import { useNavigate } from 'react-router-dom';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { 
   ChevronLeft, Calendar, RefreshCw, Server, BoxSelect, AlertTriangle, Send, 
   ArrowRight, ArrowLeft, RotateCcw, XCircle, PauseCircle, 
-  List, Columns, AlertCircle, CheckCircle, Search, Save, Play
+  List, Columns, AlertCircle, CheckCircle, Search, Save, Play, Printer
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -30,7 +32,7 @@ export default function FiscalClosing() {
       finishDate: ''
   });
 
-  // NOVO: Busca específica da coluna Pendente
+  // Busca específica da coluna Pendente
   const [pendingSearch, setPendingSearch] = useState('');
 
   // Estado de Seleção do Card (Kanban)
@@ -47,7 +49,7 @@ export default function FiscalClosing() {
   const columnOrder = ['pending', 'docs_received', 'analysis', 'taxes_generated', 'done'];
 
   // --- MODAIS DE PROCESSO ---
-  const [modalStartConfirmationOpen, setModalStartConfirmationOpen] = useState(false); // NOVO
+  const [modalStartConfirmationOpen, setModalStartConfirmationOpen] = useState(false);
   const [modalImportOpen, setModalImportOpen] = useState(false);
   const [modalApurationOpen, setModalApurationOpen] = useState(false);
   const [modalClosingOpen, setModalClosingOpen] = useState(false);
@@ -147,15 +149,11 @@ export default function FiscalClosing() {
 
     setActiveTask(task);
 
-    // Gatilhos de Avanço
     if (direction === 'next') {
-      
-      // ALTERAÇÃO AQUI: De Pendente para Importação -> Abre Modal
       if (task.status === 'pending' && nextStatus === 'docs_received') {
         setModalStartConfirmationOpen(true);
         return;
       }
-
       if (task.status === 'docs_received' && nextStatus === 'analysis') {
         setImportError(''); setShowManualInput(false); setModalImportOpen(true);
         return;
@@ -170,7 +168,6 @@ export default function FiscalClosing() {
       }
     }
 
-    // Gatilhos de Retorno
     if (direction === 'prev') {
       if (task.status === 'done') { setModalReverseClosingOpen(true); return; }
       if (task.status === 'taxes_generated') { setModalReverseGuidesOpen(true); return; }
@@ -182,13 +179,9 @@ export default function FiscalClosing() {
   };
 
   const executeUpdate = async (task, newStatus, extraFields = {}) => {
-    // Atualização Otimista
     const updatedTask = { ...task, status: newStatus, ...extraFields };
-    
-    // Atualiza AllData
     setAllData(prev => prev.map(i => i.id === task.id ? updatedTask : i));
     
-    // Atualiza Columns
     const prevStatus = task.status;
     const sourceItems = columns[prevStatus].items.filter(i => i.id !== task.id);
     const destItems = [...columns[newStatus].items, updatedTask];
@@ -206,20 +199,14 @@ export default function FiscalClosing() {
       if (error) throw error;
     } catch (error) {
       console.error("Erro ao salvar:", error);
-      fetchData(); // Reverte
+      fetchData();
     }
   };
 
-  // --- SALVAR AJUSTE DE ERRO ---
   const handleSaveAdjustment = async (id, text) => {
       try {
-          const { error } = await supabase
-            .from('fiscal_closings')
-            .update({ import_adjustment_details: text })
-            .eq('id', id);
-          
+          const { error } = await supabase.from('fiscal_closings').update({ import_adjustment_details: text }).eq('id', id);
           if (error) throw error;
-          
           setAllData(prev => prev.map(i => i.id === id ? { ...i, import_adjustment_details: text } : i));
       } catch (err) {
           alert('Erro ao salvar ajuste');
@@ -227,8 +214,6 @@ export default function FiscalClosing() {
   };
 
   // --- CONFIRMAÇÕES DE MODAIS ---
-  
-  // NOVO: Confirmar Início
   const confirmStart = () => {
       executeUpdate(activeTask, 'docs_received', { started_at: new Date().toISOString() });
       setModalStartConfirmationOpen(false);
@@ -277,6 +262,85 @@ export default function FiscalClosing() {
     } catch (error) { alert(error.message); } finally { setLoading(false); }
   };
 
+  // --- GERAÇÃO DO PDF DE ERROS ---
+  const generateErrorPDF = () => {
+      const errorItems = allData.filter(i => i.import_type === 'manual');
+      const totalClients = allData.length;
+      const totalErrors = errorItems.length;
+      const percent = totalClients > 0 ? ((totalErrors / totalClients) * 100).toFixed(1) : 0;
+
+      // Agrupamento por Regime
+      const byRegime = errorItems.reduce((acc, item) => {
+          const regime = item.clients?.regime || 'Não Informado';
+          acc[regime] = (acc[regime] || 0) + 1;
+          return acc;
+      }, {});
+
+      const doc = new jsPDF();
+
+      // Cabeçalho
+      doc.setFontSize(18);
+      doc.setTextColor(220, 38, 38); // Red color
+      doc.text("Relatório de Erros de Importação", 14, 20);
+
+      doc.setFontSize(10);
+      doc.setTextColor(100);
+      doc.text(`Data/Hora de Emissão: ${format(new Date(), 'dd/MM/yyyy HH:mm')}`, 14, 28);
+      doc.text(`Competência: ${format(new Date(selectedCompetence + '-01'), 'MM/yyyy')}`, 14, 33);
+
+      // Tabela
+      const tableBody = errorItems.map(item => [
+          item.clients?.razao_social || '-',
+          item.import_error_details || 'Erro não especificado',
+          item.import_adjustment_details || ''
+      ]);
+
+      autoTable(doc, {
+          startY: 40,
+          head: [['Cliente', 'Erro Identificado', 'Ajuste Realizado (Solução)']],
+          body: tableBody,
+          theme: 'grid',
+          headStyles: { fillColor: [239, 68, 68] }, // Red-500
+          styles: { fontSize: 9 },
+          columnStyles: { 0: { cellWidth: 50 }, 1: { cellWidth: 50 } }
+      });
+
+      let finalY = doc.lastAutoTable.finalY + 15;
+
+      // Quebra de página se necessário
+      if (finalY > 240) { doc.addPage(); finalY = 20; }
+
+      // Resumo Final
+      doc.setFillColor(245, 245, 245);
+      doc.rect(14, finalY, 180, 50, 'F');
+
+      doc.setFontSize(12);
+      doc.setTextColor(0);
+      doc.setFont(undefined, 'bold');
+      doc.text("Resumo Geral", 20, finalY + 10);
+      doc.setFont(undefined, 'normal');
+
+      doc.setFontSize(10);
+      doc.text(`Quantidade de Erros: ${totalErrors}`, 20, finalY + 20);
+      doc.text(`Impacto: ${percent}% do Total de Clientes (${totalClients})`, 20, finalY + 28);
+
+      doc.setFont(undefined, 'bold');
+      doc.text("Total de Erros por Regime:", 100, finalY + 10);
+      doc.setFont(undefined, 'normal');
+      
+      let yRegime = finalY + 18;
+      if (Object.keys(byRegime).length === 0) {
+          doc.text("- Nenhum erro registrado", 100, yRegime);
+      } else {
+          Object.entries(byRegime).forEach(([regime, count]) => {
+              doc.text(`- ${regime}: ${count}`, 100, yRegime);
+              yRegime += 6;
+          });
+      }
+
+      window.open(doc.output('bloburl'), '_blank');
+  };
+
   return (
     <div className="flex flex-col h-screen bg-background overflow-hidden">
       
@@ -293,7 +357,6 @@ export default function FiscalClosing() {
         </div>
 
         <div className="flex flex-wrap items-center gap-4 justify-end">
-           {/* BOTÃO MODO DE VISUALIZAÇÃO */}
            <div className="bg-surface p-1 rounded-xl border border-white/10 flex">
                <button 
                   onClick={() => setViewMode('kanban')}
@@ -311,7 +374,6 @@ export default function FiscalClosing() {
                </button>
            </div>
 
-           {/* BOTÃO ERROS DE IMPORTAÇÃO */}
            <button 
               onClick={() => setModalErrorsListOpen(true)}
               className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 hover:text-red-300 px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all"
@@ -342,12 +404,10 @@ export default function FiscalClosing() {
             <div className="h-full flex items-center justify-center text-gray-500 animate-pulse">Carregando dados...</div>
         ) : viewMode === 'kanban' ? (
             
-            /* === VISÃO KANBAN === */
             <div className="flex h-full gap-6 min-w-[1400px] overflow-x-auto pb-4">
                 {Object.entries(columns).map(([colKey, col]) => (
                 <div key={colKey} className="flex-1 flex flex-col min-w-[280px]">
                     
-                    {/* Header da Coluna */}
                     <div className={`flex flex-col gap-2 mb-4 px-2 pb-2 border-b-2 ${colKey === 'done' ? 'border-emerald-500' : 'border-white/10'}`}>
                         <div className="flex items-center gap-2">
                             <div className={`w-3 h-3 rounded-full ${col.color}`}></div>
@@ -355,7 +415,6 @@ export default function FiscalClosing() {
                             <span className="ml-auto text-xs bg-white/10 px-2 py-0.5 rounded text-gray-400">{col.items.length}</span>
                         </div>
                         
-                        {/* NOVO: Campo de Busca na Coluna Pendente */}
                         {colKey === 'pending' && (
                             <div className="mt-1">
                                 <div className="flex items-center bg-black/20 rounded-lg px-2 py-1.5 border border-white/5 focus-within:border-white/20 transition-colors">
@@ -380,7 +439,6 @@ export default function FiscalClosing() {
                     <div className="flex-1 rounded-2xl p-2 bg-surface/20 border border-white/5 overflow-y-auto custom-scrollbar">
                     {col.items
                         .filter(item => {
-                            // Aplica filtro apenas se for a coluna pendente e houver busca
                             if (colKey === 'pending' && pendingSearch) {
                                 return item.clients?.razao_social?.toLowerCase().includes(pendingSearch.toLowerCase());
                             }
@@ -413,7 +471,6 @@ export default function FiscalClosing() {
                                 
                                 <h3 className="text-white font-bold text-sm leading-snug mb-3">{item.clients?.razao_social}</h3>
 
-                                {/* Detalhes Kanban */}
                                 {colKey === 'done' && item.completed_at && (
                                     <p className="text-[10px] text-emerald-400 mt-2 border-t border-white/10 pt-2 flex justify-between">
                                         <span>Concluído:</span>
@@ -421,7 +478,6 @@ export default function FiscalClosing() {
                                     </p>
                                 )}
 
-                                {/* Ações Kanban */}
                                 {isSelected && (
                                     <div className="absolute inset-0 bg-black/60 backdrop-blur-[1px] rounded-xl flex items-center justify-between px-2 animate-fade-in" onClick={(e) => e.stopPropagation()}>
                                         {colKey !== 'pending' ? (
@@ -447,7 +503,6 @@ export default function FiscalClosing() {
             /* === VISÃO EM LISTA (TABELA) === */
             <div className="bg-surface rounded-2xl border border-white/5 h-full flex flex-col overflow-hidden animate-fade-in">
                 
-                {/* Filtros da Lista */}
                 <div className="p-4 border-b border-white/5 grid grid-cols-1 md:grid-cols-5 gap-4">
                     <div className="bg-black/20 border border-white/10 rounded-lg flex items-center px-3 py-2">
                         <Search className="w-4 h-4 text-gray-500 mr-2" />
@@ -458,7 +513,6 @@ export default function FiscalClosing() {
                             onChange={e => setListFilters({...listFilters, client: e.target.value})}
                         />
                     </div>
-                    {/* ... (outros filtros mantidos) ... */}
                     <select 
                         className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white text-sm outline-none"
                         value={listFilters.regime}
@@ -498,7 +552,6 @@ export default function FiscalClosing() {
                     />
                 </div>
 
-                {/* Tabela */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
                     <table className="w-full text-left border-collapse">
                         <thead className="sticky top-0 bg-surface z-10">
@@ -549,7 +602,7 @@ export default function FiscalClosing() {
 
       {/* --- MODAIS --- */}
       
-      {/* NOVO: Modal Confirmação de Início */}
+      {/* Modal Confirmação de Início */}
       {modalStartConfirmationOpen && activeTask && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-fade-in">
            <div className="bg-surface rounded-2xl w-full max-w-sm border border-white/10 p-6">
@@ -568,7 +621,7 @@ export default function FiscalClosing() {
         </div>
       )}
 
-      {/* Modal Erros Lista (Mantido) */}
+      {/* Modal Erros Lista com Botão PDF */}
       {modalErrorsListOpen && (
           <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-fade-in">
               <div className="bg-surface rounded-2xl w-full max-w-4xl border border-white/10 p-6 flex flex-col h-[80vh]">
@@ -576,7 +629,17 @@ export default function FiscalClosing() {
                       <h2 className="text-xl font-bold text-white flex items-center gap-2">
                           <AlertTriangle className="w-6 h-6 text-red-500" /> Relatório de Erros de Importação
                       </h2>
-                      <button onClick={() => setModalErrorsListOpen(false)} className="text-gray-400 hover:text-white"><XCircle className="w-6 h-6" /></button>
+                      <div className="flex items-center gap-4">
+                          <button 
+                              onClick={generateErrorPDF} 
+                              className="bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-all shadow-lg active:scale-95"
+                          >
+                              <Printer className="w-4 h-4" /> Gerar PDF
+                          </button>
+                          <button onClick={() => setModalErrorsListOpen(false)} className="text-gray-400 hover:text-white transition-colors">
+                              <XCircle className="w-6 h-6" />
+                          </button>
+                      </div>
                   </div>
                   
                   <div className="flex-1 overflow-y-auto custom-scrollbar bg-black/20 rounded-xl border border-white/5">
